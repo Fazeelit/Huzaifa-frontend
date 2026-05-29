@@ -22,6 +22,19 @@ import { hasAnyPermission, hasModuleAccess } from "../authservice/permissions";
 import { getFirstAllowedRoute } from "../authservice/navigation";
 import { onAuthStateChanged, readPersistedAuthValue } from "../authservice/authStorage";
 
+function parsePermissions(value) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function MainLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -50,9 +63,7 @@ export default function MainLayout({ children }) {
       try {
         const storedRole = readPersistedAuthValue("role");
         const storedPermissionsRaw = readPersistedAuthValue("permissions");
-        const storedPermissions = storedPermissionsRaw
-          ? JSON.parse(storedPermissionsRaw)
-          : [];
+        const storedPermissions = parsePermissions(storedPermissionsRaw);
 
         if (!storedRole) {
           router.replace("/auth/login");
@@ -168,11 +179,21 @@ export default function MainLayout({ children }) {
 
   /* ================= BLOCK UNAUTHORIZED ================= */
   useEffect(() => {
-    if (!loading && !hasAccess) {
-      const fallbackRoute = getFirstAllowedRoute(permissions);
-      window.location.replace(fallbackRoute || "/auth/login");
+    if (loading || hasAccess) {
+      return;
     }
-  }, [loading, hasAccess, permissions, router]);
+
+    const fallbackRoute = getFirstAllowedRoute(permissions);
+
+    if (fallbackRoute && fallbackRoute !== pathname) {
+      router.replace(fallbackRoute);
+      return;
+    }
+
+    if (!fallbackRoute) {
+      router.replace("/auth/login");
+    }
+  }, [hasAccess, loading, pathname, permissions, router]);
 
   if (loading) {
     return (
@@ -202,7 +223,13 @@ export default function MainLayout({ children }) {
         />
 
         <main className="min-w-0 flex-1 px-3 pt-3 sm:px-4 sm:pt-4">
-          {hasAccess ? children : null}
+          {hasAccess ? (
+            children
+          ) : !loading ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-6 text-sm text-amber-900">
+              You do not have permission to view this page.
+            </div>
+          ) : null}
         </main>
       </div>
     </div>

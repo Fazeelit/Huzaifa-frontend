@@ -1,6 +1,5 @@
 "use client";
 
-import axios from "axios";
 import { toast } from "react-hot-toast";
 
 const BASE_URL =
@@ -8,6 +7,53 @@ const BASE_URL =
 const NORMALIZED_BASE_URL = BASE_URL.replace(/\/+$/, "");
 const AUTH_TOKEN_KEY = "authToken";
 const AUTH_USER_KEY = "authUser";
+
+function parseResponseBody(rawValue, headers = {}) {
+  if (rawValue == null || rawValue === "") {
+    return null;
+  }
+
+  if (typeof rawValue !== "string") {
+    return rawValue;
+  }
+
+  const trimmedValue = rawValue.trim();
+
+  if (
+    trimmedValue === "" ||
+    trimmedValue === "null" ||
+    trimmedValue === "undefined"
+  ) {
+    return null;
+  }
+
+  const contentTypeHeader =
+    headers["content-type"] || headers["Content-Type"] || "";
+  const looksLikeJson =
+    contentTypeHeader.includes("application/json") ||
+    /^[\[{"]/.test(trimmedValue) ||
+    /^(true|false|-?\d+(\.\d+)?)$/i.test(trimmedValue);
+
+  if (!looksLikeJson) {
+    return rawValue;
+  }
+
+  try {
+    return JSON.parse(trimmedValue);
+  } catch {
+    return rawValue;
+  }
+}
+
+function createRequestError(message, { status = 0, data = null } = {}) {
+  const error = new Error(message);
+  error.status = status;
+  error.response = {
+    status,
+    data,
+  };
+  return error;
+}
 
 function normalizeStoredValue(value) {
   if (value == null) {
@@ -32,7 +78,7 @@ function getAuthStorage() {
     return null;
   }
 
-  return window.sessionStorage;
+  return window.localStorage;
 }
 
 function migrateLegacyAuthStorage() {
@@ -40,25 +86,26 @@ function migrateLegacyAuthStorage() {
     return;
   }
 
-  const sessionStorage = getAuthStorage();
+  const localStorage = getAuthStorage();
+  const sessionStorage = window.sessionStorage;
 
-  if (!sessionStorage) {
+  if (!localStorage || !sessionStorage) {
     return;
   }
 
-  const legacyToken = window.localStorage.getItem(AUTH_TOKEN_KEY);
-  const legacyUser = window.localStorage.getItem(AUTH_USER_KEY);
+  const legacyToken = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  const legacyUser = sessionStorage.getItem(AUTH_USER_KEY);
 
-  if (legacyToken && !sessionStorage.getItem(AUTH_TOKEN_KEY)) {
-    sessionStorage.setItem(AUTH_TOKEN_KEY, legacyToken);
+  if (legacyToken && !localStorage.getItem(AUTH_TOKEN_KEY)) {
+    localStorage.setItem(AUTH_TOKEN_KEY, legacyToken);
   }
 
-  if (legacyUser && !sessionStorage.getItem(AUTH_USER_KEY)) {
-    sessionStorage.setItem(AUTH_USER_KEY, legacyUser);
+  if (legacyUser && !localStorage.getItem(AUTH_USER_KEY)) {
+    localStorage.setItem(AUTH_USER_KEY, legacyUser);
   }
 
-  window.localStorage.removeItem(AUTH_TOKEN_KEY);
-  window.localStorage.removeItem(AUTH_USER_KEY);
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  sessionStorage.removeItem(AUTH_USER_KEY);
 }
 
 async function authRequest(
@@ -71,6 +118,9 @@ async function authRequest(
     showErrorToast = true,
   } = {},
 ) {
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), 30000);
+
   try {
     const headers = {
       "Content-Type": "application/json",
@@ -83,30 +133,45 @@ async function authRequest(
       }
     }
 
-    const response = await axios({
-      url: `${NORMALIZED_BASE_URL}${endpoint}`,
+    const response = await fetch(`${NORMALIZED_BASE_URL}${endpoint}`, {
       method,
       headers,
-      data,
-      timeout: 30000,
+      body: data == null ? undefined : JSON.stringify(data),
+      signal: abortController.signal,
     });
 
-    if (showSuccessToast && response.data?.message) {
-      toast.success(response.data.message);
+    const rawResponse = await response.text();
+    const parsedResponse = parseResponseBody(rawResponse, {
+      "content-type": response.headers.get("content-type") || "",
+    });
+
+    if (!response.ok) {
+      const message =
+        parsedResponse?.message ||
+        parsedResponse?.error ||
+        response.statusText ||
+        "Something went wrong";
+      throw createRequestError(message, {
+        status: response.status,
+        data: parsedResponse,
+      });
     }
 
-    return response.data;
+    if (showSuccessToast && parsedResponse?.message) {
+      toast.success(parsedResponse.message);
+    }
+
+    return parsedResponse;
   } catch (error) {
-    const isEventLikeError =
-      typeof Event !== "undefined" && error instanceof Event;
-    const isAxiosNetworkError =
-      axios.isAxiosError(error) && !error.response && Boolean(error.request);
     const fallbackMessage = "Something went wrong";
     const message =
-      isEventLikeError
+      error?.name === "AbortError"
+        ? `The request to ${NORMALIZED_BASE_URL}${endpoint} timed out.`
+        :
+      typeof Event !== "undefined" && error instanceof Event
         ? fallbackMessage
         :
-      isAxiosNetworkError
+      error instanceof TypeError && !error.response
         ? `Unable to reach the API at ${NORMALIZED_BASE_URL}. Check the API URL, CORS settings, and whether the backend is running.`
         :
       error?.message === "[object Event]"
@@ -120,7 +185,12 @@ async function authRequest(
     if (showErrorToast) {
       toast.error(message);
     }
-    throw new Error(message);
+    throw createRequestError(message, {
+      status: error?.response?.status || error?.status || 0,
+      data: error?.response?.data ?? null,
+    });
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -129,6 +199,7 @@ export async function apiRequest(endpoint, options = {}) {
     typeof options === "string" ? { method: options } : options;
 
   const {
+    method = "GET",
     suppressSuccessToast = false,
     suppressErrorToast = false,
     includeAuth = true,
@@ -136,6 +207,7 @@ export async function apiRequest(endpoint, options = {}) {
   } = normalizedOptions || {};
 
   return authRequest(endpoint, {
+    method,
     includeAuth,
     showSuccessToast: !suppressSuccessToast,
     showErrorToast: !suppressErrorToast,
@@ -192,8 +264,8 @@ export function clearStoredAuthSession() {
   storage.removeItem(AUTH_USER_KEY);
 
   if (typeof window !== "undefined") {
-    window.localStorage.removeItem(AUTH_TOKEN_KEY);
-    window.localStorage.removeItem(AUTH_USER_KEY);
+    window.sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    window.sessionStorage.removeItem(AUTH_USER_KEY);
   }
 }
 

@@ -29,6 +29,19 @@ import {
   readPersistedAuthValue,
 } from "../authservice/authStorage";
 
+function parsePermissions(value) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function Sidebar({ isOpen, toggleSidebar, isCollapsed = false }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -44,9 +57,7 @@ export default function Sidebar({ isOpen, toggleSidebar, isCollapsed = false }) 
         const storedUser = readPersistedAuthValue("user");
         const storedRole = readPersistedAuthValue("role");
         const storedPermissionsRaw = readPersistedAuthValue("permissions");
-        const storedPermissions = storedPermissionsRaw
-          ? JSON.parse(storedPermissionsRaw)
-          : [];
+        const storedPermissions = parsePermissions(storedPermissionsRaw);
 
         if (!storedRole) {
           router.replace("/auth/login");

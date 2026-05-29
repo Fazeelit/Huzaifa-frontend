@@ -43,7 +43,12 @@ export default function ProductsPage() {
   const fetchProducts = async ({ silent = false } = {}) => {
     try {
       const res = await apiRequest("/products", { method: "GET" });
-      setProducts(res.data.data || res.data);
+      const nextProducts = Array.isArray(res?.data?.data)
+        ? res.data.data
+        : Array.isArray(res?.data)
+        ? res.data
+        : [];
+      setProducts(nextProducts);
     } catch (err) {
       if (!silent) {
         setErrorMessage(

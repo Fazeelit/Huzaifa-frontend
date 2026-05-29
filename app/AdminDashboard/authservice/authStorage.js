@@ -21,13 +21,13 @@ function normalizeStoredAuthValue(value) {
   return value;
 }
 
-function clearLegacyLocalAuth() {
+function clearLegacySessionAuth() {
   if (typeof window === "undefined") {
     return;
   }
 
   for (const key of AUTH_KEYS) {
-    window.localStorage.removeItem(key);
+    window.sessionStorage.removeItem(key);
   }
 }
 
@@ -36,7 +36,33 @@ function getBrowserAuthStorage() {
     return null;
   }
 
-  return window.sessionStorage;
+  return window.localStorage;
+}
+
+function migrateLegacySessionAuth() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const persistentStorage = getBrowserAuthStorage();
+  const sessionStorage = window.sessionStorage;
+
+  if (!persistentStorage || !sessionStorage) {
+    return;
+  }
+
+  for (const key of AUTH_KEYS) {
+    const currentValue = normalizeStoredAuthValue(persistentStorage.getItem(key));
+    const legacyValue = normalizeStoredAuthValue(sessionStorage.getItem(key));
+
+    if (!currentValue && legacyValue) {
+      persistentStorage.setItem(key, legacyValue);
+    }
+  }
+
+  for (const key of AUTH_KEYS) {
+    sessionStorage.removeItem(key);
+  }
 }
 
 function getDesktopAuthStorage() {
@@ -53,7 +79,7 @@ export function persistAuthState({ token, user, role, permissions }) {
     return;
   }
 
-  clearLegacyLocalAuth();
+  clearLegacySessionAuth();
 
   const normalizedPermissions = Array.isArray(permissions) ? permissions : [];
 
@@ -81,7 +107,7 @@ export function clearPersistedAuth() {
     browserAuthStorage.removeItem(key);
   }
 
-  clearLegacyLocalAuth();
+  clearLegacySessionAuth();
 
   const desktopAuthStorage = getDesktopAuthStorage();
   desktopAuthStorage?.clear();
@@ -95,6 +121,7 @@ export function readPersistedAuthValue(key) {
     return null;
   }
 
+  migrateLegacySessionAuth();
   return normalizeStoredAuthValue(browserAuthStorage.getItem(key));
 }
 
@@ -120,4 +147,4 @@ export function onAuthStateChanged(callback) {
   };
 }
 
-clearLegacyLocalAuth();
+clearLegacySessionAuth();

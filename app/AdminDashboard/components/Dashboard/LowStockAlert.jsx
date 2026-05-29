@@ -25,7 +25,7 @@ const LowStockAlert = () => {
   useEffect(() => {
     const fetchProducts = async () => {
       try {
-        const res = await apiRequest("/products");
+        const res = await apiRequest("/products", { method: "GET" });
         setProducts(getArray(res));
       } catch (error) {
         console.error("Failed to fetch products:", error);
