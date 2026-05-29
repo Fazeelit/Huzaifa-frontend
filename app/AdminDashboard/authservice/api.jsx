@@ -4,10 +4,28 @@ import axios from "axios";
 import { toast } from "react-hot-toast";
 
 const BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "https://huzaifa-backend.onrender.com/api";
+  process.env.NEXT_PUBLIC_API_BASE_URL || "https://backendaihub.onrender.com/api";
 const NORMALIZED_BASE_URL = BASE_URL.replace(/\/+$/, "");
 const AUTH_TOKEN_KEY = "authToken";
 const AUTH_USER_KEY = "authUser";
+
+function normalizeStoredValue(value) {
+  if (value == null) {
+    return null;
+  }
+
+  const normalizedValue = String(value).trim();
+
+  if (
+    normalizedValue === "" ||
+    normalizedValue === "null" ||
+    normalizedValue === "undefined"
+  ) {
+    return null;
+  }
+
+  return value;
+}
 
 function getAuthStorage() {
   if (typeof window === "undefined") {
@@ -106,6 +124,25 @@ async function authRequest(
   }
 }
 
+export async function apiRequest(endpoint, options = {}) {
+  const normalizedOptions =
+    typeof options === "string" ? { method: options } : options;
+
+  const {
+    suppressSuccessToast = false,
+    suppressErrorToast = false,
+    includeAuth = true,
+    ...restOptions
+  } = normalizedOptions || {};
+
+  return authRequest(endpoint, {
+    includeAuth,
+    showSuccessToast: !suppressSuccessToast,
+    showErrorToast: !suppressErrorToast,
+    ...restOptions,
+  });
+}
+
 export function getStoredAuthToken() {
   const storage = getAuthStorage();
 
@@ -114,7 +151,7 @@ export function getStoredAuthToken() {
   }
 
   migrateLegacyAuthStorage();
-  return storage.getItem(AUTH_TOKEN_KEY);
+  return normalizeStoredValue(storage.getItem(AUTH_TOKEN_KEY));
 }
 
 export function getStoredAuthUser() {
@@ -125,7 +162,7 @@ export function getStoredAuthUser() {
   }
 
   migrateLegacyAuthStorage();
-  return storage.getItem(AUTH_USER_KEY);
+  return normalizeStoredValue(storage.getItem(AUTH_USER_KEY));
 }
 
 export function setStoredAuthSession({ token, user }) {

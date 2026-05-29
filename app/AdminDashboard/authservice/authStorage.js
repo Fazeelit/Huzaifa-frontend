@@ -3,6 +3,24 @@
 const AUTH_KEYS = ["authToken", "user", "role", "permissions"];
 const AUTH_STORAGE_EVENT = "auth-storage-changed";
 
+function normalizeStoredAuthValue(value) {
+  if (value == null) {
+    return null;
+  }
+
+  const normalizedValue = String(value).trim();
+
+  if (
+    normalizedValue === "" ||
+    normalizedValue === "null" ||
+    normalizedValue === "undefined"
+  ) {
+    return null;
+  }
+
+  return value;
+}
+
 function clearLegacyLocalAuth() {
   if (typeof window === "undefined") {
     return;
@@ -77,7 +95,7 @@ export function readPersistedAuthValue(key) {
     return null;
   }
 
-  return browserAuthStorage.getItem(key);
+  return normalizeStoredAuthValue(browserAuthStorage.getItem(key));
 }
 
 export function notifyAuthStateChanged() {
