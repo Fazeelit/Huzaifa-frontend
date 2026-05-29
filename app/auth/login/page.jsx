@@ -219,14 +219,14 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-sky-50 via-white to-emerald-50 px-4 py-8 overflow-hidden">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-sky-50 via-white to-emerald-50 px-3 py-4 sm:px-4 sm:py-8">
       <div className="pointer-events-none absolute -top-24 -left-16 h-72 w-72 rounded-full bg-sky-200/35 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-20 -right-12 h-72 w-72 rounded-full bg-emerald-200/35 blur-3xl" />
 
       {/* SUCCESS MODAL */}
       {showSuccess && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-2xl shadow-2xl text-center border border-emerald-100">
+          <div className="mx-4 w-full max-w-sm rounded-2xl border border-emerald-100 bg-white p-6 text-center shadow-2xl">
             <FaCheckCircle className="text-green-600 text-5xl mx-auto mb-3" />
             <h2 className="text-xl font-bold text-green-700">
               Login Successful
@@ -239,7 +239,7 @@ export default function LoginPage() {
       {/* ERROR MODAL */}
       {showErrorModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-2xl shadow-2xl text-center border border-rose-100">
+          <div className="mx-4 w-full max-w-sm rounded-2xl border border-rose-100 bg-white p-6 text-center shadow-2xl">
             <FaTimesCircle className="text-red-600 text-5xl mx-auto mb-3" />
             <h2 className="text-xl font-bold text-red-700">Login Failed</h2>
             <p className="text-gray-600 mt-2">{message}</p>
@@ -254,7 +254,7 @@ export default function LoginPage() {
       )}
 
       {/* LOGIN FORM */}
-      <div className="relative w-full max-w-5xl rounded-3xl border border-slate-200/60 bg-white/90 shadow-2xl backdrop-blur-sm overflow-hidden">
+      <div className="relative w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200/60 bg-white/90 shadow-2xl backdrop-blur-sm sm:rounded-3xl">
         <div className="grid md:grid-cols-[1.05fr_1fr]">
           <div className="hidden md:flex flex-col justify-between p-10 bg-gradient-to-br from-slate-900 to-emerald-500 text-white">
             <div className="space-y-6">
@@ -278,9 +278,9 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div className="p-6 sm:p-8 md:p-10">
-            <div className="md:hidden mb-6 rounded-2xl bg-gradient-to-r from-slate-900 to-emerald-500 p-4 text-white">
-              <p className="font-serif text-3xl font-semibold italic">Huzaifa Autos Feroza</p>
+          <div className="p-5 sm:p-8 md:p-10">
+            <div className="mb-6 rounded-2xl bg-gradient-to-r from-slate-900 to-emerald-500 p-4 text-white md:hidden">
+              <p className="font-serif text-2xl font-semibold italic leading-tight sm:text-3xl">Huzaifa Autos Feroza</p>
               <p className="text-sm"> Feroza</p>
             </div>
 
@@ -292,10 +292,10 @@ export default function LoginPage() {
             />
             </div>            */}
            
-            <h2 className="text-2xl font-bold text-center text-slate-800">
+            <h2 className="text-center text-2xl font-bold text-slate-800 sm:text-3xl">
               Autos POS Login
             </h2>
-            <p className="text-center text-sm text-slate-500 mt-1 mb-6">
+            <p className="mb-6 mt-1 text-center text-sm text-slate-500">
               Enter your credentials to continue
             </p>
 
