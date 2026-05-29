@@ -10,20 +10,17 @@ const readOnlyCellClass = "px-2 py-2 text-xs text-slate-700";
 export default function BulkStockGrid({ rows = [], onCellChange }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200">
-      <table className="w-full min-w-[1100px] text-left text-xs">
+      <table className="w-full min-w-[760px] text-left text-xs sm:min-w-[900px]">
         <thead className="bg-slate-900 text-white">
           <tr>
             <th className="px-2 py-2 font-semibold">Product Name</th>
-            <th className="px-2 py-2 font-semibold">Generic Name</th>
             <th className="px-2 py-2 font-semibold">Company</th>
             <th className="px-2 py-2 font-semibold">Purchase Qty</th>
             <th className="px-2 py-2 font-semibold">Purchase Price</th>
-            <th className="px-2 py-2 font-semibold">Sale Price</th>
+            <th className="w-24 px-2 py-2 font-semibold">Retail Price</th>
+            <th className="w-24 px-2 py-2 font-semibold">Whole Sale Price</th>
             <th className="px-2 py-2 font-semibold">Discount Allowed</th>
             <th className="px-2 py-2 font-semibold">Max Discount (%)</th>
-            <th className="px-2 py-2 font-semibold">Batch Number</th>
-            <th className="px-2 py-2 font-semibold">MFG Date</th>
-            <th className="px-2 py-2 font-semibold">Expiry Date</th>
             <th className="px-2 py-2 font-semibold">UOM</th>
             <th className="px-2 py-2 font-semibold">Stock Qty</th>
           </tr>
@@ -31,7 +28,7 @@ export default function BulkStockGrid({ rows = [], onCellChange }) {
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={13} className="px-3 py-8 text-center text-sm text-slate-500">
+              <td colSpan={10} className="px-3 py-8 text-center text-sm text-slate-500">
                 No bill items loaded yet.
               </td>
             </tr>
@@ -39,18 +36,27 @@ export default function BulkStockGrid({ rows = [], onCellChange }) {
             rows.map((row, idx) => (
               <tr key={row.rowId || `${row.name}-${idx}`} className="border-t border-slate-100">
                 <td className={readOnlyCellClass}>{row.name || "-"}</td>
-                <td className={readOnlyCellClass}>{row.genName || "-"}</td>
                 <td className={readOnlyCellClass}>{row.company || "-"}</td>
                 <td className={readOnlyCellClass}>{row.purchaseQty}</td>
                 <td className={readOnlyCellClass}>{row.purchasePrice}</td>
-                <td className="px-2 py-1">
+                <td className="w-24 px-2 py-1">
                   <input
                     type="number"
                     min={0}
                     step="0.01"
-                    value={row.salePrice}
-                    onChange={(e) => onCellChange?.(idx, "salePrice", e.target.value)}
-                    className={cellInputClass}
+                    value={row.retailSalePrice ?? ""}
+                    onChange={(e) => onCellChange?.(idx, "retailSalePrice", e.target.value)}
+                    className={`${cellInputClass} text-center`}
+                  />
+                </td>
+                <td className="w-24 px-2 py-1">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={row.wholeSalePrice ?? ""}
+                    onChange={(e) => onCellChange?.(idx, "wholeSalePrice", e.target.value)}
+                    className={`${cellInputClass} text-center`}
                   />
                 </td>
                 <td className="px-2 py-1">
@@ -80,31 +86,6 @@ export default function BulkStockGrid({ rows = [], onCellChange }) {
                     onChange={(e) => onCellChange?.(idx, "maxAllowedDiscount", e.target.value)}
                     className={`${cellInputClass} ${row.discountAllowed ? "" : "cursor-not-allowed bg-slate-100 text-slate-400"}`}
                     disabled={!row.discountAllowed}
-                  />
-                </td>
-                <td className="px-2 py-1">
-                  <input
-                    type="text"
-                    value={row.batchNo || ""}
-                    onChange={(e) => onCellChange?.(idx, "batchNo", e.target.value)}
-                    className={cellInputClass}
-                    placeholder="Batch no"
-                  />
-                </td>
-                <td className="px-2 py-1">
-                  <input
-                    type="month"
-                    value={row.mfgDate || ""}
-                    onChange={(e) => onCellChange?.(idx, "mfgDate", e.target.value)}
-                    className={cellInputClass}
-                  />
-                </td>
-                <td className="px-2 py-1">
-                  <input
-                    type="month"
-                    value={row.expiryDate || ""}
-                    onChange={(e) => onCellChange?.(idx, "expiryDate", e.target.value)}
-                    className={cellInputClass}
                   />
                 </td>
                 <td className={readOnlyCellClass}>{row.uom || "-"}</td>

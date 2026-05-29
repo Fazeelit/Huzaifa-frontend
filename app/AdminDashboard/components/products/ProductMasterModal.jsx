@@ -15,7 +15,7 @@ const urduInputStyle = {
 };
 
 const fieldClass =
-  "min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base leading-8 text-black shadow-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100";
+  "min-h-10 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm leading-6 text-black shadow-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100";
 const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-black";
 const categoryOptions = [
   "Engine Parts", "Brake Parts", "Clutch Parts", "Transmission Parts", "Suspension Parts", "Steering Parts", "Electrical Parts", "Battery Parts", "Fuel System Parts", "Exhaust Parts", "Cooling System Parts", "Chain & Sprockets", "Wheel & Tire Parts", "Lighting Parts", "Body Parts", "Handlebar Parts", "Seat Parts", "Filters", "Belts & Hoses", "Lubricants & Oils", "Safety & Riding Gear", "Mirrors", "Foot Pegs", "Side Stand & Center Stand", "Accessories"
@@ -168,9 +168,6 @@ const ProductMasterModal = ({ onClose, onSaved }) => {
     ["retailSalePrice", "Retail Sale Price"],
     ["wholeSalePrice", "Whole Sale Price"],
     ["manufacturer", "Manufacturer"],
-    ["bno", "Batch Number"],
-    ["mfg", "MFG (MM.YY)"],
-    ["exp", "EXP (MM.YY)"],
     ["date", "Date"],
     ["status", "Status"],
   ];

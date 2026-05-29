@@ -10,24 +10,6 @@ const fieldClass =
   "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100";
 const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600";
 
-const toMonthInput = (value) => {
-  if (!value) return "";
-  const clean = String(value).trim();
-  const yyyyMm = clean.match(/^(\d{4})-(\d{2})$/);
-  if (yyyyMm) return `${yyyyMm[1]}-${yyyyMm[2]}`;
-
-  const mmYy = clean.replace("/", ".").match(/^(\d{1,2})\.(\d{2})$/);
-  if (mmYy) {
-    const month = String(Number(mmYy[1])).padStart(2, "0");
-    const year = 2000 + Number(mmYy[2]);
-    return `${year}-${month}`;
-  }
-
-  const parsed = new Date(clean);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}`;
-};
-
 const ProductModal = ({ onClose }) => {
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [allProducts, setAllProducts] = useState([]);
@@ -96,11 +78,13 @@ const ProductModal = ({ onClose }) => {
 
       const purchaseQty = Number(item?.quantity || 0);
       const uom = masterProduct?.unit || masterProduct?.baseUnit || "unit";
+      const manufacturer = item?.manufacturer || masterProduct?.manufacturer || "";
 
       return {
         rowId: `${item?.productId || item?.name || "row"}-${index}`,
         productId: String(item?.productId || masterProduct?._id || ""),
         name: item?.name || "",
+        company: manufacturer,
         purchaseQty,
         purchasePrice: Number((item?.purchasePrice ?? item?.price) || 0),
         retailSalePrice: Number(
@@ -117,16 +101,13 @@ const ProductModal = ({ onClose }) => {
         ),
         discountAllowed: Boolean(masterProduct?.discountAllowed || false),
         maxAllowedDiscount: Number(masterProduct?.maxAllowedDiscount || 0),
-        batchNo: masterProduct?.bno || "",
-        mfgDate: toMonthInput(masterProduct?.mfg),
-        expiryDate: toMonthInput(masterProduct?.exp),
         uom,
         unit: masterProduct?.unit || uom,
         baseUnit: masterProduct?.baseUnit || masterProduct?.unit || "unit",
         uomLevels: Array.isArray(masterProduct?.uomLevels) ? masterProduct.uomLevels : [],
         category: masterProduct?.category || "Food",
         shelf: Number(masterProduct?.shelf || 0),
-        manufacturer: masterProduct?.manufacturer || item?.manufacturer || "",
+        manufacturer,
         stockQty: convertToBaseUnit(purchaseQty, uom, masterProduct),
         date: purchaseDate || masterProduct?.date || masterProduct?.createdAt || "",
       };
@@ -239,11 +220,6 @@ const ProductModal = ({ onClose }) => {
       if (!Number.isFinite(Number(row.wholeSalePrice)) || Number(row.wholeSalePrice) < 0) {
         errs.push("Whole Sale Price is invalid");
       }
-      if (!String(row.batchNo || "").trim()) {
-        errs.push("Batch Number is required");
-      }
-      if (!row.mfgDate) errs.push("MFG Date is required");
-      if (!row.expiryDate) errs.push("Expiry Date is required");
       if (row.discountAllowed) {
         const maxDiscount = Number(row.maxAllowedDiscount);
         if (!Number.isFinite(maxDiscount) || maxDiscount < 0 || maxDiscount > 100) {
@@ -281,14 +257,10 @@ const ProductModal = ({ onClose }) => {
       const payload = {
         billNo: String(invoiceNumber).trim(),
         items: gridRows.map((row) => ({
-          productId: row.productId || "",
           name: row.name,
           manufacturer: row.manufacturer,
           category: row.category || "Food",
           shelf: Number(row.shelf || 0),
-          batchNo: row.batchNo,
-          mfgDate: row.mfgDate,
-          expiryDate: row.expiryDate,
           purchaseQty: Number(row.purchaseQty || 0),
           purchasePrice: Number(row.purchasePrice || 0),
           retailSalePrice: Number(row.retailSalePrice || 0),
@@ -391,8 +363,8 @@ const ProductModal = ({ onClose }) => {
         </div>
       )}
 
-      <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-slate-900/50 p-3 backdrop-blur-sm sm:p-4">
-        <div className="max-h-[92vh] w-full max-w-[92vw] overflow-y-auto rounded-2xl border border-white/80 bg-white shadow-2xl">
+      <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-slate-900/50 p-2 backdrop-blur-sm sm:p-4">
+        <div className="max-h-[92vh] w-full max-w-[96vw] overflow-y-auto rounded-2xl border border-white/80 bg-white shadow-2xl sm:max-w-5xl">
           <div className="flex items-center justify-between gap-3 rounded-t-2xl bg-gradient-to-r from-sky-600 to-cyan-600 p-4 text-white sm:p-6">
             <h2 className="min-w-0 text-xl font-bold sm:text-2xl">Bulk Stock From Purchase Bill</h2>
             <button type="button" onClick={onClose} className="rounded-lg p-1 transition hover:bg-white/20">

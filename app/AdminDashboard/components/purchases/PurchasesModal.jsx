@@ -277,7 +277,7 @@ const PurchaseModal = ({ onClose, onCreated }) => {
 
       {/* MAIN MODAL */}
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/50 p-3 backdrop-blur-sm sm:p-4">
-        <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
           {/* HEADER */}
           <div className="sticky top-0 flex items-center justify-between gap-3 bg-gradient-to-r from-blue-500 to-blue-600 p-4 text-white sm:p-6">
             <h2 className="min-w-0 text-xl font-bold sm:text-2xl">New Purchase</h2>
@@ -334,7 +334,7 @@ const PurchaseModal = ({ onClose, onCreated }) => {
               </div>
 
               <div className="hidden gap-2 px-2 text-sm font-semibold text-gray-600 md:flex">
-                <div className="flex-1">Medicine Name</div>
+                <div className="w-[260px] shrink-0">Product Name</div>
                 <div className="w-20 text-center">QTY</div>
                 <div className="w-24 text-center">Price</div>
                 <div className="w-24 text-center">Manufacturer</div>
@@ -346,7 +346,7 @@ const PurchaseModal = ({ onClose, onCreated }) => {
               {items.map((it) => (
                 <div key={it.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-2">
                   {/* PRODUCT SELECT */}
-                  <div className="flex-1 min-w-[220px]">
+                  <div className="min-w-[220px] flex-1 md:w-[260px] md:flex-none">
                     <input
                       list={`products-${it.id}`}
                       value={it.searchText ?? it.name ?? ""}
