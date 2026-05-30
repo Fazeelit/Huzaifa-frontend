@@ -1010,6 +1010,7 @@ export async function apiRequest(endpoint, options = {}) {
     suppressSuccessToast = false,
     suppressErrorToast = false,
     includeAuth = true,
+    allowOfflineCrud = true,
     ...restOptions
   } = normalizedOptions || {};
 
@@ -1058,7 +1059,7 @@ export async function apiRequest(endpoint, options = {}) {
     }
   }
 
-  if (!action || !config) {
+  if (!allowOfflineCrud || !action || !config) {
     try {
       const response = await networkApiRequest(endpoint, {
         method: normalizedMethod,

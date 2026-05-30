@@ -178,6 +178,7 @@ export default function LoginPage() {
           password,
           role, // ✅ sent for validation only
         },
+        allowOfflineCrud: false,
         suppressErrorToast: true,
         suppressErrorLog: true,
       });
