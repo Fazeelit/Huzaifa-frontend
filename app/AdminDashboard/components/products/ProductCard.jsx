@@ -2,7 +2,13 @@
 
 import React from "react";
 
-export default function ProductCard({ title, count, color, Icon, compactValue = false }) {
+export default function ProductCard({
+  title,
+  count,
+  color,
+  Icon,
+  compactValue = false,
+}) {
   const tone = {
     blue: {
       badge: "from-sky-500 to-blue-600",

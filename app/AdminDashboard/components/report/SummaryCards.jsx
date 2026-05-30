@@ -290,7 +290,7 @@ const SummaryCards = () => {
         </button>
       </div>
 
-      <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mx-auto grid w-full max-w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map((card) => (
           <div
             key={card.title}

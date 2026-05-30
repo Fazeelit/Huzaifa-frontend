@@ -8,6 +8,8 @@ import {
   TrendingDown,
   HandCoins,
   BadgeDollarSign,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 import ProductCard from "../products/ProductCard";
@@ -38,6 +40,7 @@ export default function ProductsPage() {
 
   const [showError, setShowError] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [showFinancialTotals, setShowFinancialTotals] = useState(false);
 
   /* ---------------- FETCH PRODUCTS ---------------- */
   const fetchProducts = async ({ silent = false } = {}) => {
@@ -211,13 +214,13 @@ export default function ProductsPage() {
     },
     {
       title: "All Products Purchase Amount",
-      count: `Rs. ${totalPurchaseAmount.toFixed(2)}`,
+      count: showFinancialTotals ? `Rs. ${totalPurchaseAmount.toFixed(2)}` : "Rs. ******",
       color: "emerald",
       Icon: HandCoins,
     },
     {
       title: "Total Expected Profit",
-      count: `Rs. ${expectedProfit.toFixed(2)}`,
+      count: showFinancialTotals ? `Rs. ${expectedProfit.toFixed(2)}` : "Rs. ******",
       color: "violet",
       Icon: BadgeDollarSign,
     },
@@ -278,6 +281,14 @@ export default function ProductsPage() {
 
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <button
+            type="button"
+            onClick={() => setShowFinancialTotals((prev) => !prev)}
+            className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 sm:w-auto"
+          >
+            {showFinancialTotals ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {showFinancialTotals ? "Hide" : "Show"}
+          </button>
+          <button
             onClick={openMasterProductModal}
             className={`h-11 w-full rounded-xl bg-gradient-to-r from-sky-600 to-cyan-600 px-5 text-sm font-semibold text-white shadow-md shadow-cyan-200/70 transition hover:-translate-y-0.5 hover:from-sky-700 hover:to-cyan-700 sm:w-auto ${blockedButtonClass} blocked-action`}
             {...blockedButtonProps(canCreate)}
@@ -295,7 +306,7 @@ export default function ProductsPage() {
       </div>
 
       {/* STATS */}
-      <div className="grid grid-cols-1 gap-4 mb-6 md:grid-cols-2 xl:grid-cols-6">
+      <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {stats.map((stat, i) => (
           <ProductCard key={i} {...stat} />
         ))}

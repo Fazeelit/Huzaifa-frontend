@@ -26,10 +26,7 @@ const unitOptions = [
 const statusOptions = ["Active", "Inactive"];
 const shelfOptions = Array.from({ length: 100 }, (_, index) => String(index + 1));
 const urduTextFields = new Set(["manufacturer"]);
-const optionalFields = new Set(["bno", "mfg", "exp"]);
 const leftAlignedFields = new Set(["manufacturer"]);
-
-const isValidMMYY = (value) => /^(0[1-9]|1[0-2])[./]\d{2}$/.test(String(value || "").trim());
 
 const normalizeUrduText = (value) =>
   String(value || "")
@@ -59,53 +56,6 @@ const extractCodeSuffix = (code) => {
   return parts.length ? parts[parts.length - 1] : "";
 };
 
-const normalizeMMYY = (value) => {
-  if (!value) return "";
-  const cleaned = value.replace(/[^\d./]/g, "").replace("/", ".");
-  const sepMatch = cleaned.match(/^(\d{1,2})[.](\d{0,2})$/);
-
-  if (sepMatch) {
-    const month = sepMatch[1].slice(0, 2).padStart(2, "0");
-    const year = sepMatch[2].slice(0, 2);
-    return year ? `${month}.${year}` : month;
-  }
-
-  const numbers = cleaned.replace(/\D/g, "").slice(0, 4);
-  if (numbers.length <= 2) return numbers;
-  return `${numbers.slice(0, 2)}.${numbers.slice(2)}`;
-};
-
-const parseExpiry = (exp) => {
-  if (!exp) return null;
-
-  if (typeof exp === "string") {
-    const clean = exp.trim().replace("/", ".");
-    const mmYYMatch = clean.match(/^(\d{1,2})\.(\d{2})$/);
-
-    if (mmYYMatch) {
-      const month = Number(mmYYMatch[1]);
-      const year = 2000 + Number(mmYYMatch[2]);
-      if (month >= 1 && month <= 12) return { month, year };
-    }
-
-    if (clean.includes("-")) {
-      const parts = clean.split("-");
-      const year = Number(parts[0]);
-      const month = Number(parts[1]);
-      if (year >= 2000 && month >= 1 && month <= 12) return { month, year };
-    }
-  }
-
-  return null;
-};
-
-const formatExpiry = (exp) => {
-  const parsed = parseExpiry(exp);
-  if (!parsed) return "";
-  const month = parsed.month.toString().padStart(2, "0");
-  return `${month}.${String(parsed.year).slice(-2)}`;
-};
-
 const ProductEditModal = ({ productId, onClose }) => {
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
@@ -126,9 +76,6 @@ const ProductEditModal = ({ productId, onClose }) => {
     wholeSalePrice: "",
     stock: "",
     manufacturer: "",
-    bno: "",
-    mfg: "",
-    exp: "",
     date: new Date().toISOString().slice(0, 10),
     status: "Active",
     description: "",
@@ -161,9 +108,6 @@ const ProductEditModal = ({ productId, onClose }) => {
           wholeSalePrice: product.wholeSalePrice ?? "",
           stock: product.stock ?? "",
           manufacturer: product.manufacturer || "",
-          bno: product.bno || "",
-          mfg: formatExpiry(product.mfg),
-          exp: formatExpiry(product.exp),
           date: product.date ? new Date(product.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
           status: product.status || "Active",
           description: product.description || "",
@@ -194,11 +138,6 @@ const ProductEditModal = ({ productId, onClose }) => {
   const handleChange = (e) => {
     const { name, value } = e.target;
 
-    if (name === "mfg" || name === "exp") {
-      setFormData((prev) => ({ ...prev, [name]: normalizeMMYY(value) }));
-      return;
-    }
-
     const nextValue = urduTextFields.has(name) ? normalizeUrduText(value) : value;
 
     if (name === "category" && codeSeed) {
@@ -223,15 +162,6 @@ const ProductEditModal = ({ productId, onClose }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (
-      (formData.mfg && !isValidMMYY(formData.mfg)) ||
-      (formData.exp && !isValidMMYY(formData.exp))
-    ) {
-      setErrorMessage("MFG and EXP must be in MM.YY format (example: 05.26).");
-      setShowError(true);
-      return;
-    }
 
     if (formData.discountAllowed) {
       const maxDiscount = Number(formData.maxAllowedDiscount);
@@ -292,9 +222,6 @@ const ProductEditModal = ({ productId, onClose }) => {
     ["retailSalePrice", "Retail Sale Price"],
     ["wholeSalePrice", "Whole Sale Price"],
     ["manufacturer", "Manufacturer"],
-    ["bno", "Batch Number"],
-    ["mfg", "MFG (MM.YY)"],
-    ["exp", "EXP (MM.YY)"],
     ["date", "Date"],
     ["status", "Status"],
   ];
@@ -413,10 +340,7 @@ const ProductEditModal = ({ productId, onClose }) => {
                           leftAlignedFields.has(key) ? "text-left" : ""
                         }`}
                         style={urduInputStyle}
-                        placeholder={
-                          key === "mfg" || key === "exp" ? "MM.YY (example: 05.26)" : undefined
-                        }
-                        required={!optionalFields.has(key)}
+                        required
                       />
                     )}
                     {key === "code" ? (

@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiRequest } from "../../AdminDashboard/authservice/api";
+import {
+  apiRequest,
+  clearCrudLocalData,
+  preloadCrudDataToLocalStorage,
+} from "../../AdminDashboard/authservice/api";
 import {
   setAuthCookies,
   clearAuthCookies,
@@ -84,6 +88,32 @@ const PERMISSION_ROUTES = {
   ACTIVITY_VIEW: "/AdminDashboard/activity",
 };
 
+function extractAuthToken(payload) {
+  if (!payload) {
+    return null;
+  }
+
+  if (typeof payload === "string") {
+    const trimmedPayload = payload.trim();
+    const bearerMatch = trimmedPayload.match(/^Bearer\s+(.+)$/i);
+    return bearerMatch?.[1] || trimmedPayload || null;
+  }
+
+  if (typeof payload === "object") {
+    return (
+      extractAuthToken(payload.token) ||
+      extractAuthToken(payload.accessToken) ||
+      extractAuthToken(payload.jwt) ||
+      extractAuthToken(payload.data?.token) ||
+      extractAuthToken(payload.data?.accessToken) ||
+      extractAuthToken(payload.data?.jwt) ||
+      null
+    );
+  }
+
+  return null;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [form, setForm] = useState({
@@ -157,11 +187,7 @@ export default function LoginPage() {
           ? response.data
           : response;
 
-      const token =
-        loginPayload?.token ||
-        loginPayload?.accessToken ||
-        loginPayload?.jwt ||
-        null;
+      const token = extractAuthToken(loginPayload);
       const user =
         loginPayload?.user ||
         loginPayload?.admin ||
@@ -178,6 +204,7 @@ export default function LoginPage() {
 
       /* ===== CLEAR OLD AUTH ===== */
       clearPersistedAuth();
+      clearCrudLocalData();
 
       /* ===== SAVE AUTH (BACKEND IS SOURCE OF TRUTH) ===== */
       persistAuthState({
@@ -187,6 +214,10 @@ export default function LoginPage() {
         permissions: user.permissions || [],
       });
       setAuthCookies(user.role);
+
+      await preloadCrudDataToLocalStorage(user.permissions || [], {
+        clearExisting: false,
+      });
 
       notifyAuthStateChanged();
       setShowSuccess(true);

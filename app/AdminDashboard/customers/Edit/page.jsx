@@ -40,7 +40,8 @@ export default function EditCustomerPage() {
   }, []);
 
   const validateCNIC = (cnic) => /^[0-9]{5}-[0-9]{7}-[0-9]{1}$/.test(cnic);
-  const validatePhone = (phone) => /^03\d{2}-\d{7}$/.test(phone);
+  const normalizePhone = (phone) => String(phone || "").replace(/\D/g, "").slice(0, 11);
+  const validatePhone = (phone) => /^03\d{9}$/.test(normalizePhone(phone));
   const validateEmail = (email) =>
     email === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -128,7 +129,7 @@ export default function EditCustomerPage() {
         name: customer.name,
         fatherName: customer.fatherName,
         cnic: customer.cnic,
-        mobile: customer.mobile,
+        mobile: normalizePhone(customer.mobile),
         email: customer.email,
         address: customer.address,
         gender: customer.gender,
@@ -231,8 +232,6 @@ export default function EditCustomerPage() {
                   placeholder="0300-1234567"
                   inputMode="numeric"
                   maxLength={12}
-                  pattern="^03\\d{2}-\\d{7}$"
-                  title="Use format 0300-1234567 (11 digits)."
                   className={`w-full px-4 py-3 rounded-lg border focus:ring-4 focus:ring-emerald-500/30 focus:border-emerald-500 transition ${errors.mobile ? "border-red-500" : "border-gray-300 dark:border-gray-600"} bg-white/80 dark:bg-gray-800/80 text-gray-900 dark:text-white`}
                 />
                 {errors.mobile ? <p className="text-xs text-red-600">{errors.mobile}</p> : null}
