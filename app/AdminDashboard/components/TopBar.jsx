@@ -54,9 +54,9 @@ export default function Topbar({
           onClick={onSyncClick}
           disabled={syncing}
           className={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-xl px-2.5 py-2 text-sm font-semibold text-white shadow-md transition disabled:cursor-not-allowed disabled:opacity-60 sm:gap-2 sm:px-3 sm:text-base ${
-            pendingSyncCount > 0 || syncing
-              ? "border border-blue-200 bg-blue-600 shadow-blue-600/20 hover:bg-blue-700"
-              : "border border-red-300 bg-red-600 shadow-red-400/20 hover:bg-red-500"
+            pendingSyncCount > 0
+              ? "border border-red-300 bg-red-600 shadow-red-400/20 hover:bg-red-500"
+              : "border border-blue-200 bg-blue-600 shadow-blue-600/20 hover:bg-blue-700"
           }`}
         >
           <RefreshCw
@@ -66,7 +66,11 @@ export default function Topbar({
           <span className="truncate text-xs sm:text-sm md:text-base">
             {syncing ? "Syncing..." : "Sync Data"}
           </span>
-          <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-normal text-white sm:text-sm">
+          <span
+            className={`rounded-full px-1.5 py-0.5 text-xs font-normal text-white sm:text-sm ${
+              pendingSyncCount > 0 ? "bg-red-600" : "bg-blue-700"
+            }`}
+          >
             {pendingSyncCount}
           </span>
         </button>
@@ -74,7 +78,7 @@ export default function Topbar({
         <div className="hidden shrink-0 sm:flex items-center">
           <span
             className={`mr-2 h-2.5 w-2.5 rounded-full ${
-              pendingSyncCount > 0 ? "bg-amber-500" : "bg-emerald-500"
+              pendingSyncCount > 0 ? "bg-red-500" : "bg-blue-500"
             }`}
           />
           <span className="text-xs font-medium text-slate-500">
