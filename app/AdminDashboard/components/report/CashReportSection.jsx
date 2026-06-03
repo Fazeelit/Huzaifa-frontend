@@ -109,7 +109,7 @@ const CashReportSection = () => {
       try {
         setLoading(true);
 
-        const [salesRes, expenseRes, customersRes, suppliersRes, purchasesRes, supplierPaymentsRes] = await Promise.all([
+        const [salesRes, expenseRes, customersRes, suppliersRes, purchasesRes, supplierPaymentsRes] = await Promise.allSettled([
           canSaleView ? apiRequest("/sales", { method: "GET" }) : Promise.resolve({ data: [] }),
           canExpenseView ? apiRequest("/expenses", { method: "GET" }) : Promise.resolve({ data: [] }),
           canCustomerView ? apiRequest("/customers", { method: "GET" }) : Promise.resolve({ customers: [] }),
@@ -124,12 +124,17 @@ const CashReportSection = () => {
             : Promise.resolve({ data: [] }),
         ]);
 
-        setSales(getArray(salesRes).map(normalizeSale));
-        setExpenses(getArray(expenseRes).map(normalizeExpense));
-        setCustomers(getCustomersArray(customersRes));
-        setSuppliers(getSuppliersArray(suppliersRes));
-        setPurchases(getArray(purchasesRes));
-        setSupplierPayments(getSupplierPaymentsArray(supplierPaymentsRes));
+        const settledValue = (result, fallback) =>
+          result.status === "fulfilled" ? result.value : fallback;
+
+        setSales(getArray(settledValue(salesRes, { data: [] })).map(normalizeSale));
+        setExpenses(getArray(settledValue(expenseRes, { data: [] })).map(normalizeExpense));
+        setCustomers(getCustomersArray(settledValue(customersRes, { customers: [] })));
+        setSuppliers(getSuppliersArray(settledValue(suppliersRes, { data: [] })));
+        setPurchases(getArray(settledValue(purchasesRes, { data: [] })));
+        setSupplierPayments(
+          getSupplierPaymentsArray(settledValue(supplierPaymentsRes, { data: [] }))
+        );
       } catch (error) {
         console.error("Failed to fetch cash report data:", error);
         setSales([]);

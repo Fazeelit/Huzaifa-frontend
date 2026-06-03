@@ -54,6 +54,12 @@ export default function InvoiceDetailsModal({
       sNo: index + 1,
       index,
       item: item.name || "-",
+      manufacturer:
+        item.manufacturer ||
+        item.company ||
+        item.brand ||
+        item.category ||
+        "-",
       qty,
       soldQty,
       returnedQty,
@@ -144,24 +150,25 @@ export default function InvoiceDetailsModal({
 
         <div className="max-h-[70vh] overflow-auto p-4 sm:p-5">
           <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full min-w-[620px] text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead className="bg-slate-900 text-white">
                 <tr>
-                  <th className="px-3 py-2 text-center">Return</th>
-                  <th className="px-3 py-2 text-left">S.No</th>
-                  <th className="px-3 py-2 text-left">Item</th>
-                  <th className="px-3 py-2 text-right">Qty</th>
-                  <th className="px-3 py-2 text-right">Returned</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="px-3 py-2 text-right">Price</th>
-                  <th className="px-3 py-2 text-right">Total</th>
+                  <th className="px-2 py-2 text-center">Return</th>
+                  <th className="px-2 py-2 text-left">S.No</th>
+                  <th className="px-2 py-2 text-left">Item</th>
+                  <th className="px-2 py-2 text-left">Manufactur</th>
+                  <th className="px-2 py-2 text-right">Qty</th>
+                  <th className="px-2 py-2 text-right">Returned</th>
+                  <th className="px-2 py-2 text-left">Status</th>
+                  <th className="px-2 py-2 text-right">Price</th>
+                  <th className="px-2 py-2 text-right">Total</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length ? (
                   rows.map((row) => (
                     <tr key={row.sNo} className="border-t border-slate-100">
-                      <td className="px-3 py-2 text-center">
+                      <td className="px-2 py-2 text-center">
                         <input
                           type="checkbox"
                           checked={!!selectedRows[row.index]}
@@ -170,13 +177,14 @@ export default function InvoiceDetailsModal({
                           className="h-4 w-4 cursor-pointer rounded border-slate-300 text-sky-600 focus:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
                         />
                       </td>
-                      <td className="px-3 py-2">{row.sNo}</td>
-                      <td className="px-3 py-2 break-words">{row.item}</td>
-                      <td className="px-3 py-2 text-right">{row.soldQty}</td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-2 py-2">{row.sNo}</td>
+                      <td className="px-2 py-2 break-words">{row.item}</td>
+                      <td className="px-2 py-2 break-words">{row.manufacturer}</td>
+                      <td className="px-2 py-2 text-right">{row.soldQty}</td>
+                      <td className="px-2 py-2 text-right">
                         {row.returnedQty > 0 ? row.returnedQty : "-"}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">
                         {isEditMode ? (
                           <select
                             value={statusDraft[row.index] || row.status}
@@ -198,13 +206,13 @@ export default function InvoiceDetailsModal({
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right">Rs {row.price.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-medium">Rs {row.total.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right">Rs {row.price.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right font-medium">Rs {row.total.toFixed(2)}</td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="8" className="px-3 py-6 text-center text-slate-500">
+                    <td colSpan="9" className="px-2 py-6 text-center text-slate-500">
                       No items available for this invoice.
                     </td>
                   </tr>

@@ -390,7 +390,7 @@ const SummaryCards = () => {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-6">
         {cards.map((card) => (
           <div
             key={card.title}
@@ -398,7 +398,7 @@ const SummaryCards = () => {
           >
             <div className="p-6">
               <p className="text-sm mb-1">{card.title}</p>
-              <p className="text-3xl font-bold">
+              <p className="text-sm font-bold">
                 {showValues ? card.value : card.title === "Profit Margin" ? "**.**%" : "Rs.****"}
               </p>
             </div>
@@ -410,3 +410,4 @@ const SummaryCards = () => {
 };
 
 export default SummaryCards;
+
