@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { toast } from "react-hot-toast";
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -22,11 +21,6 @@ import TopBar from "./TopBar";
 import { hasAnyPermission, hasModuleAccess } from "../authservice/permissions";
 import { getFirstAllowedRoute } from "../authservice/navigation";
 import { onAuthStateChanged, readPersistedAuthValue } from "../authservice/authStorage";
-import {
-  getPendingCrudCount,
-  subscribeToCrudSync,
-  syncPendingCrudOperations,
-} from "../authservice/api";
 
 function parsePermissions(value) {
   if (!value) {
@@ -41,69 +35,6 @@ function parsePermissions(value) {
   }
 }
 
-const ROUTES = {
-  "/AdminDashboard": {
-    title: "Dashboard",
-    icon: LayoutDashboard,
-    permission: "DASHBOARD_VIEW",
-  },
-  "/AdminDashboard/pos": {
-    title: "POS",
-    icon: ShoppingCart,
-    moduleKey: "POS",
-  },
-  "/AdminDashboard/customers": {
-    title: "Customers",
-    icon: Users,
-    moduleKey: "CUSTOMER",
-  },
-  "/AdminDashboard/products": {
-    title: "Products",
-    icon: Package,
-    moduleKey: "PRODUCT",
-  },
-  "/AdminDashboard/purchases": {
-    title: "Purchases",
-    icon: PackagePlus,
-    moduleKey: "PURCHASE",
-  },
-  "/AdminDashboard/suppliers": {
-    title: "Suppliers",
-    icon: Layers,
-    moduleKey: "SUPPLIER",
-  },
-  "/AdminDashboard/sales": {
-    title: "Sales",
-    icon: Receipt,
-    moduleKey: "SALE",
-  },
-  "/AdminDashboard/tests": {
-    title: "Tests",
-    icon: FlaskConical,
-    permission: "TEST_VIEW",
-  },
-  "/AdminDashboard/expenses": {
-    title: "Expenses",
-    icon: Wallet,
-    moduleKey: "EXPENSE",
-  },
-  "/AdminDashboard/reports": {
-    title: "Reports",
-    icon: BarChart3,
-    permission: "REPORT_VIEW",
-  },
-  "/AdminDashboard/users": {
-    title: "Users",
-    icon: UserCog,
-    moduleKey: "USER",
-  },
-  "/AdminDashboard/roles": {
-    title: "Roles",
-    icon: ShieldCheck,
-    moduleKey: "ROLE",
-  },
-};
-
 export default function MainLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -113,62 +44,6 @@ export default function MainLayout({ children }) {
   const [role, setRole] = useState(null);
   const [permissions, setPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [pendingSyncCount, setPendingSyncCount] = useState(0);
-  const [syncing, setSyncing] = useState(false);
-
-  const runPendingSync = useCallback(async ({
-    silent = false,
-    showEmptyToast = false,
-  } = {}) => {
-    if (syncing) {
-      return null;
-    }
-
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      if (!silent) {
-        toast.error("Internet connection is required to sync local data.");
-      }
-      return null;
-    }
-
-    const currentPendingCount = getPendingCrudCount();
-
-    if (currentPendingCount <= 0) {
-      if (showEmptyToast) {
-        toast.success("No local data is waiting to sync.");
-      }
-      return { synced: 0, failed: 0, pending: 0, discarded: 0 };
-    }
-
-    try {
-      setSyncing(true);
-      const result = await syncPendingCrudOperations();
-
-      if (!silent) {
-        if (result.failed > 0) {
-          toast.error(
-            `${result.synced} synced, ${result.pending} still pending.`,
-          );
-        } else if (result.discarded > 0) {
-          toast.error(
-            `${result.synced} synced, ${result.discarded} invalid change(s) were removed from the queue.`,
-          );
-        } else {
-          toast.success(`Synced ${result.synced} local change(s).`);
-        }
-      }
-
-      return result;
-    } catch (error) {
-      if (!silent) {
-        toast.error(error?.message || "Failed to sync local data.");
-      }
-      throw error;
-    } finally {
-      setSyncing(false);
-      setPendingSyncCount(getPendingCrudCount());
-    }
-  }, [syncing]);
 
   const handleTopbarIconClick = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
@@ -181,35 +56,6 @@ export default function MainLayout({ children }) {
   useEffect(() => {
     setMobileSidebarOpen(false);
   }, [pathname]);
-
-  useEffect(() => {
-    setPendingSyncCount(getPendingCrudCount());
-    return subscribeToCrudSync(({ pendingCount = 0 } = {}) => {
-      setPendingSyncCount(pendingCount);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (pendingSyncCount <= 0 || syncing) {
-      return undefined;
-    }
-
-    if (typeof window === "undefined") {
-      return undefined;
-    }
-
-    const handleOnline = () => {
-      void runPendingSync({ silent: true });
-    };
-
-    window.addEventListener("online", handleOnline);
-
-    if (navigator.onLine) {
-      void runPendingSync({ silent: true });
-    }
-
-    return () => window.removeEventListener("online", handleOnline);
-  }, [pendingSyncCount, runPendingSync, syncing]);
 
   /* ================= LOAD AUTH ================= */
   useEffect(() => {
@@ -237,6 +83,70 @@ export default function MainLayout({ children }) {
     loadAuth();
     return onAuthStateChanged(loadAuth);
   }, [router]);
+
+  /* ================= ROUTE CONFIG ================= */
+  const ROUTES = {
+    "/AdminDashboard": {
+      title: "Dashboard",
+      icon: LayoutDashboard,
+      permission: "DASHBOARD_VIEW",
+    },
+    "/AdminDashboard/pos": {
+      title: "POS",
+      icon: ShoppingCart,
+      moduleKey: "POS",
+    },
+    "/AdminDashboard/customers": {
+      title: "Customers",
+      icon: Users,
+      moduleKey: "CUSTOMER",
+    },
+    "/AdminDashboard/products": {
+      title: "Products",
+      icon: Package,
+      moduleKey: "PRODUCT",
+    },
+    "/AdminDashboard/purchases": {
+      title: "Purchases",
+      icon: PackagePlus,
+      moduleKey: "PURCHASE",
+    },
+    "/AdminDashboard/suppliers": {
+      title: "Suppliers",
+      icon: Layers,
+      moduleKey: "SUPPLIER",
+    },
+    "/AdminDashboard/sales": {
+      title: "Sales",
+      icon: Receipt,
+      moduleKey: "SALE",
+    },
+    "/AdminDashboard/tests": {
+      title: "Tests",
+      icon: FlaskConical,
+      permission: "TEST_VIEW",
+    },
+    "/AdminDashboard/expenses": {
+      title: "Expenses",
+      icon: Wallet,
+      moduleKey: "EXPENSE",
+    },
+    "/AdminDashboard/reports": {
+      title: "Reports",
+      icon: BarChart3,
+      permission: "REPORT_VIEW",
+    },
+    "/AdminDashboard/users": {
+      title: "Users",
+      icon: UserCog,
+      moduleKey: "USER",
+    },
+    "/AdminDashboard/roles": {
+      title: "Roles",
+      icon: ShieldCheck,
+      moduleKey: "ROLE",
+    },
+  };
 
   /* ================= MATCH ROUTE ================= */
   const matchedRoute = useMemo(() => {
@@ -293,10 +203,6 @@ export default function MainLayout({ children }) {
     );
   }
 
-  const handleSyncClick = async () => {
-    await runPendingSync({ showEmptyToast: true });
-  };
-
   return (
     <div className="min-h-screen overflow-x-hidden bg-gray-50 md:flex">
       <Sidebar
@@ -314,9 +220,6 @@ export default function MainLayout({ children }) {
           title={pageTitle}
           titleIcon={pageTitleIcon}
           onTopIconClick={handleTopbarIconClick}
-          onSyncClick={handleSyncClick}
-          pendingSyncCount={pendingSyncCount}
-          syncing={syncing}
         />
 
         <main className="min-w-0 flex-1 px-3 pt-3 sm:px-4 sm:pt-4">

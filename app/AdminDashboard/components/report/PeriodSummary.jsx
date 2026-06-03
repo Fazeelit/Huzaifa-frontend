@@ -95,14 +95,14 @@ const PeriodSummary = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 p-6 pt-0 sm:grid-cols-2 md:grid-cols-3">
+      <div className="p-6 pt-0 grid grid-cols-2 md:grid-cols-3 gap-4">
         {summaryItems.map((item) => (
           <div
             key={item.label}
             className="text-center p-4 bg-slate-50 rounded-lg"
           >
             <p className="text-sm text-slate-600 mb-1">{item.label}</p>
-            <p className="break-words text-xl font-bold text-slate-900">{item.value}</p>
+            <p className="text-xl font-bold text-slate-900">{item.value}</p>
           </div>
         ))}
       </div>

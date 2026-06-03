@@ -2,11 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  apiRequest,
-  clearCrudLocalData,
-  preloadCrudDataToLocalStorage,
-} from "../../AdminDashboard/authservice/api";
+import { apiRequest } from "../../AdminDashboard/authservice/api";
 import {
   setAuthCookies,
   clearAuthCookies,
@@ -17,6 +13,7 @@ import {
   persistAuthState,
 } from "../../AdminDashboard/authservice/authStorage";
 import { getFirstAllowedRoute } from "../../AdminDashboard/authservice/navigation";
+import { readStoredAuth } from "../../AdminDashboard/authservice/auth";
 import {
   FaUserCog,
   FaEnvelope,
@@ -88,27 +85,29 @@ const PERMISSION_ROUTES = {
   ACTIVITY_VIEW: "/AdminDashboard/activity",
 };
 
-function extractAuthToken(payload) {
-  if (!payload) {
-    return null;
-  }
+function extractToken(payload) {
+  const candidates = [
+    payload?.token,
+    payload?.accessToken,
+    payload?.jwt,
+    payload?.data?.token,
+    payload?.data?.accessToken,
+    payload?.data?.jwt,
+  ];
 
-  if (typeof payload === "string") {
-    const trimmedPayload = payload.trim();
-    const bearerMatch = trimmedPayload.match(/^Bearer\s+(.+)$/i);
-    return bearerMatch?.[1] || trimmedPayload || null;
-  }
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
 
-  if (typeof payload === "object") {
-    return (
-      extractAuthToken(payload.token) ||
-      extractAuthToken(payload.accessToken) ||
-      extractAuthToken(payload.jwt) ||
-      extractAuthToken(payload.data?.token) ||
-      extractAuthToken(payload.data?.accessToken) ||
-      extractAuthToken(payload.data?.jwt) ||
-      null
-    );
+    const normalizedToken = candidate.trim().replace(/^["']|["']$/g, "");
+    if (
+      normalizedToken &&
+      !normalizedToken.includes("[object Object]") &&
+      !/\s/.test(normalizedToken)
+    ) {
+      return normalizedToken;
+    }
   }
 
   return null;
@@ -139,6 +138,34 @@ export default function LoginPage() {
       router.prefetch(route);
     });
   }, [router, showSuccess]);
+
+  useEffect(() => {
+    const { token, role, permissions } = readStoredAuth();
+
+    if (!token || !role) {
+      return;
+    }
+
+    const normalizedPermissions = Array.isArray(permissions) ? permissions : [];
+    const permissionPriority =
+      ROLE_PERMISSION_PRIORITY[String(role || "").toUpperCase()] ||
+      PERMISSION_PRIORITY;
+    let redirectTo =
+      getFirstAllowedRoute(normalizedPermissions) || "/AdminDashboard";
+
+    if (normalizedPermissions.includes("*")) {
+      redirectTo = "/AdminDashboard";
+    }
+
+    for (const perm of permissionPriority) {
+      if (normalizedPermissions.includes(perm) && PERMISSION_ROUTES[perm]) {
+        redirectTo = PERMISSION_ROUTES[perm];
+        break;
+      }
+    }
+
+    router.replace(redirectTo);
+  }, [router]);
 
   /* ================= LOGIN ================= */
   const handleLogin = async (e) => {
@@ -178,7 +205,6 @@ export default function LoginPage() {
           password,
           role, // ✅ sent for validation only
         },
-        allowOfflineCrud: false,
         suppressErrorToast: true,
         suppressErrorLog: true,
       });
@@ -188,7 +214,7 @@ export default function LoginPage() {
           ? response.data
           : response;
 
-      const token = extractAuthToken(loginPayload);
+      const token = extractToken(loginPayload) || extractToken(response);
       const user =
         loginPayload?.user ||
         loginPayload?.admin ||
@@ -205,7 +231,6 @@ export default function LoginPage() {
 
       /* ===== CLEAR OLD AUTH ===== */
       clearPersistedAuth();
-      clearCrudLocalData();
 
       /* ===== SAVE AUTH (BACKEND IS SOURCE OF TRUTH) ===== */
       persistAuthState({
@@ -215,10 +240,6 @@ export default function LoginPage() {
         permissions: user.permissions || [],
       });
       setAuthCookies(user.role);
-
-      await preloadCrudDataToLocalStorage(user.permissions || [], {
-        clearExisting: false,
-      });
 
       notifyAuthStateChanged();
       setShowSuccess(true);

@@ -15,6 +15,10 @@ import {
 } from "lucide-react";
 import { apiRequest } from "./../../authservice/api";
 import { usePermissions } from "../../authservice/usePermissions";
+import {
+  computeDailyCashSnapshot,
+  getSupplierPaymentsArray,
+} from "../../utils/dailyCash";
 
 /* ===================== HELPERS ===================== */
 
@@ -32,6 +36,22 @@ const getCustomersArray = (res) =>
     : Array.isArray(res?.data?.customers)
     ? res.data.customers
     : getArray(res);
+
+const getSuppliersArray = (res) =>
+  Array.isArray(res?.suppliers)
+    ? res.suppliers
+    : Array.isArray(res?.data?.suppliers)
+    ? res.data.suppliers
+    : getArray(res);
+
+const getSalesArray = (res) =>
+  Array.isArray(res?.data)
+    ? res.data
+    : Array.isArray(res?.data?.data)
+    ? res.data.data
+    : Array.isArray(res)
+    ? res
+    : [];
 
 const getCustomerPaymentHistory = (customer) =>
   Array.isArray(customer?.paymentHistory) ? customer.paymentHistory : [];
@@ -62,17 +82,45 @@ const isToday = (date) => {
   return parsed.toDateString() === new Date().toDateString();
 };
 
-const isSameDay = (date, targetDate) => {
-  const parsed = parseLocalDate(date);
-  if (!parsed || !targetDate) return false;
-  return parsed.toDateString() === targetDate.toDateString();
-};
-
 const toNumber = (value) => {
   if (typeof value === "number") return value;
   const normalized = String(value || "").replace(/,/g, "");
   const match = normalized.match(/-?\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : 0;
+};
+
+const isDateInRange = (value, start, endExclusive) => {
+  const parsed = parseLocalDate(value);
+  return Boolean(parsed && parsed >= start && parsed < endExclusive);
+};
+
+const getExpenseAmount = (expense) =>
+  toNumber(
+    expense?.amount ??
+      expense?.totalamount ??
+      expense?.totalAmount ??
+      expense?.expenseAmount
+  );
+
+const getPurchaseAmount = (purchase) => {
+  const directTotal = toNumber(
+    purchase?.totalAmount ??
+      purchase?.grandTotal ??
+      purchase?.subtotal ??
+      purchase?.total
+  );
+
+  if (directTotal > 0) {
+    return directTotal;
+  }
+
+  return (Array.isArray(purchase?.products) ? purchase.products : []).reduce(
+    (sum, product) =>
+      sum +
+      toNumber(product?.purchasePrice ?? product?.price) *
+        toNumber(product?.qty ?? product?.quantity),
+    0
+  );
 };
 
 const getCustomerOutstandingAmount = (customer) => {
@@ -102,11 +150,16 @@ const getSaleTotal = (sale) => {
   return (
     sale?.products?.reduce(
       (sum, product) =>
-        sum + toNumber(product?.salePrice ?? product?.price) * toNumber(product?.quantity ?? product?.qty),
+        sum +
+        toNumber(product?.salePrice ?? product?.price) *
+          toNumber(product?.chargedQuantity ?? product?.quantity ?? product?.qty),
       0
     ) || 0
   );
 };
+
+const getDeductedSaleQuantity = (product = {}) =>
+  Math.max(toNumber(product?.quantity ?? product?.qty) - toNumber(product?.returnedQuantity), 0);
 
 const getProductLookupKeys = (product = {}) => {
   const keys = [];
@@ -159,12 +212,8 @@ const Cards = () => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-        const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-        const last30Days = new Date(today);
-        last30Days.setDate(today.getDate() - 30);
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
+        const currentYearStart = new Date(today.getFullYear(), 0, 1);
+        const nextYearStart = new Date(today.getFullYear() + 1, 0, 1);
 
         /* ================= FETCH DATA ================= */
         const canSaleView = can("SALE_VIEW");
@@ -172,28 +221,42 @@ const Cards = () => {
         const canProductView = can("PRODUCT_VIEW");
         const canPurchaseView = can("PURCHASE_VIEW");
         const canCustomerView = can("CUSTOMER_VIEW");
+        const canSupplierView = can("SUPPLIER_VIEW");
         const [
           salesRes,
           expenseRes,
           productRes,
           purchaseRes,
           customersRes,
+          suppliersRes,
+          supplierPaymentsRes,
         ] = await Promise.allSettled([
           canSaleView ? apiRequest("/sales") : Promise.resolve({ data: [] }),
           canExpenseView ? apiRequest("/expenses") : Promise.resolve({ data: [] }),
           canProductView ? apiRequest("/products") : Promise.resolve({ data: [] }),
           canPurchaseView ? apiRequest("/purchases") : Promise.resolve({ data: [] }),
           canCustomerView ? apiRequest("/customers") : Promise.resolve({ customers: [] }),
+          canSupplierView ? apiRequest("/suppliers") : Promise.resolve({ data: [] }),
+          canSupplierView
+            ? apiRequest("/supplierpayments", {
+                suppressErrorToast: true,
+                suppressErrorLog: true,
+              })
+            : Promise.resolve({ data: [] }),
         ]);
 
         const settledValue = (result) =>
           result.status === "fulfilled" ? result.value : { data: [] };
 
-        const sales = getArray(settledValue(salesRes));
+        const sales = getSalesArray(settledValue(salesRes));
         const expenses = getArray(settledValue(expenseRes));
         const products = getArray(settledValue(productRes));
         const purchases = getArray(settledValue(purchaseRes));
         const customers = getCustomersArray(settledValue(customersRes));
+        const suppliers = getSuppliersArray(settledValue(suppliersRes));
+        const supplierPayments = getSupplierPaymentsArray(
+          settledValue(supplierPaymentsRes)
+        );
 
         /* ================= MERGE PRODUCTS ================= */
         const productMap = new Map();
@@ -234,10 +297,26 @@ const Cards = () => {
 
         /* ================= SALE PROFIT ================= */
         const calculateProfit = (sale) => {
+          const saleTotal = getSaleTotal(sale);
           const totalPurchaseAmount = (Array.isArray(sale?.products) ? sale.products : []).reduce(
             (sum, product) => {
               const quantity = Math.max(
-                Number(product?.quantity || product?.qty || 0) - Number(product?.returnedQuantity || 0),
+                getDeductedSaleQuantity(product),
+                0
+              );
+              return sum + Number(product?.purchasePrice || 0) * quantity;
+            },
+            0
+          );
+
+          return Number((saleTotal - totalPurchaseAmount).toFixed(2));
+        };
+
+        const calculateSalesPageProfit = (sale) => {
+          const totalPurchaseAmount = (Array.isArray(sale?.products) ? sale.products : []).reduce(
+            (sum, product) => {
+              const quantity = Math.max(
+                getDeductedSaleQuantity(product),
                 0
               );
               return sum + Number(product?.purchasePrice || 0) * quantity;
@@ -258,116 +337,78 @@ const Cards = () => {
           0
         );
 
-        const todaysExpenses = expenses
-          .filter((expense) => isToday(expense.date || expense.createdAt))
-          .reduce((sum, expense) => sum + toNumber(expense.amount || expense.totalamount), 0);
-
-        const todaysCustomerPaid = customers.reduce(
-          (sum, customer) =>
-            sum +
-            getCustomerPaymentHistory(customer)
-              .filter((payment) => isToday(payment?.date || payment?.paymentDate || payment?.createdAt))
-              .reduce((paymentSum, payment) => paymentSum + toNumber(payment?.amount), 0),
-          0
-        );
-
-        const todaysWalkInSales = todaysSales
-          .filter((sale) => isWalkInSale(sale))
-          .reduce((sum, sale) => sum + getSaleTotal(sale), 0);
-
-        const yesterdaysSales = sales.filter((sale) =>
-          isSameDay(sale.saleDate || sale.createdAt, yesterday)
-        );
-
-        const yesterdaysWalkInSales = yesterdaysSales
-          .filter((sale) => isWalkInSale(sale))
-          .reduce((sum, sale) => sum + getSaleTotal(sale), 0);
-
-        const yesterdaysCustomerPaid = customers.reduce(
-          (sum, customer) =>
-            sum +
-            getCustomerPaymentHistory(customer)
-              .filter((payment) =>
-                isSameDay(payment?.date || payment?.paymentDate || payment?.createdAt, yesterday)
-              )
-              .reduce((paymentSum, payment) => paymentSum + toNumber(payment?.amount), 0),
-          0
-        );
-
-        const yesterdaysExpenses = expenses
-          .filter((expense) => isSameDay(expense.date || expense.createdAt, yesterday))
-          .reduce((sum, expense) => sum + toNumber(expense.amount || expense.totalamount), 0);
-
-        const previousDayDailyCash =
-          (yesterdaysWalkInSales + yesterdaysCustomerPaid) - yesterdaysExpenses;
-
-        const dailyCash =
-          previousDayDailyCash +
-          (todaysWalkInSales + todaysCustomerPaid) -
-          todaysExpenses;
+        const { yearlyDailyCash } = computeDailyCashSnapshot({
+          sales,
+          expenses,
+          customers,
+          suppliers,
+          purchases,
+          supplierPayments,
+          targetDate: today,
+        });
         const pendingAmount = customers.reduce(
           (sum, customer) => sum + getCustomerOutstandingAmount(customer),
           0
         );
 
-        /* ================= MONTHLY ================= */
-        const currentMonthSales = sales.filter(
-          (s) => {
-            const saleDate = new Date(s.saleDate || s.createdAt);
-            return !Number.isNaN(saleDate.getTime()) && saleDate >= currentMonthStart && saleDate < nextMonthStart;
-          }
+        /* ================= JANUARY 1 RESET CARDS ================= */
+        const yearToDateSales = sales.filter((sale) =>
+          isDateInRange(
+            sale.saleDate || sale.createdAt,
+            currentYearStart,
+            nextYearStart
+          )
         );
 
-        const monthlySalesAmount = currentMonthSales.reduce(
-          (sum, s) => sum + getSaleTotal(s),
+        const monthlySalesAmount = yearToDateSales.reduce(
+          (sum, sale) => sum + Number(sale?.totalAmount || 0),
           0
         );
 
-        const monthlyProfit = sales
-          .filter((sale) => {
-            const saleDate = parseLocalDate(sale.createdAt || sale.saleDate);
-            return saleDate && saleDate >= last30Days;
-          })
-          .reduce((sum, sale) => sum + calculateProfit(sale), 0);
+        const monthlyProfit = yearToDateSales
+          .reduce((sum, sale) => sum + calculateSalesPageProfit(sale), 0);
 
         /* ================= EXPENSES ================= */
-        const currentMonthExpenses = expenses.filter((expense) => {
-          const expenseDate = parseLocalDate(expense.date || expense.createdAt);
-          return expenseDate && expenseDate >= currentMonthStart && expenseDate < nextMonthStart;
+        const currentYearExpenses = expenses.filter((expense) => {
+          return isDateInRange(
+            expense.date || expense.createdAt,
+            currentYearStart,
+            nextYearStart
+          );
         });
 
-        const totalExpenses = currentMonthExpenses.reduce(
-          (sum, e) => sum + Number(e.amount || 0),
+        const totalExpenses = currentYearExpenses.reduce(
+          (sum, e) => sum + getExpenseAmount(e),
           0
         );
 
-        const totalInvestment = currentMonthExpenses.reduce(
-          (sum, e) => sum + Number(e.investment || 0),
-          0
-        );
+        const pendingPayments = currentYearExpenses
+          .filter((e) => String(e.paymentStatus || "").toLowerCase() === "pending")
+          .reduce((sum, e) => sum + getExpenseAmount(e), 0);
 
-        const pendingPayments = currentMonthExpenses
-          .filter((e) => e.paymentStatus === "Pending")
-          .reduce((sum, e) => sum + Number(e.amount || 0), 0);
-
-        const completedPayments = currentMonthExpenses
-          .filter((e) => e.paymentStatus === "Completed")
-          .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+        const completedPayments = currentYearExpenses
+          .filter((e) =>
+            ["completed", "paid"].includes(
+              String(e.paymentStatus || "").toLowerCase()
+            )
+          )
+          .reduce((sum, e) => sum + getExpenseAmount(e), 0);
 
         /* ================= OTHER METRICS ================= */
         const lowStockItems = mergedProducts.filter(
           (p) => p.stock < 5
         ).length;
 
-        const currentMonthPurchases = purchases.filter((purchase) => {
-          const purchaseDate = parseLocalDate(
-            purchase.purchaseDate || purchase.date || purchase.createdAt
+        const currentYearPurchases = purchases.filter((purchase) => {
+          return isDateInRange(
+            purchase.purchaseDate || purchase.date || purchase.createdAt,
+            currentYearStart,
+            nextYearStart
           );
-          return purchaseDate && purchaseDate >= currentMonthStart && purchaseDate < nextMonthStart;
         });
 
-        const totalProductPurchase = currentMonthPurchases.reduce(
-          (sum, p) => sum + Number(p.totalAmount || 0),
+        const totalProductPurchase = currentYearPurchases.reduce(
+          (sum, p) => sum + getPurchaseAmount(p),
           0
         );
 
@@ -382,8 +423,8 @@ const Cards = () => {
           },
           {
             title: "Daily Cash",
-            value: `Rs.${dailyCash.toFixed(2)}`,
-            subtitle: "Yesterday daily cash + today's net cash activity",
+            value: `Rs.${yearlyDailyCash.toFixed(2)}`,
+            subtitle: "Daily cash balance for this year, reset every January 1",
             icon: <Wallet className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-teal-500 to-emerald-600",
           },
@@ -411,21 +452,21 @@ const Cards = () => {
           {
             title: "Monthly Profit",
             value: `Rs.${monthlyProfit.toFixed(2)}`,
-            subtitle: "Current month sales profit",
+            subtitle: "Current month sales profit, reset on January 1",
             icon: <TrendingUp className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-purple-500 to-pink-600",
           },
           {
             title: "Total Product Purchase",
             value: `Rs.${totalProductPurchase.toFixed(2)}`,
-            subtitle: "Current month purchases",
+            subtitle: "Current month purchases, reset on January 1",
             icon: <Package className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-cyan-500 to-blue-600",
           },          
           {
             title: "Month Sales",
             value: `Rs.${monthlySalesAmount.toFixed(2)}`,
-            subtitle: "Current month sales amount",
+            subtitle: "Current month sales amount, reset on January 1",
             icon: <Receipt className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-rose-500 to-red-600",
           },
@@ -434,7 +475,7 @@ const Cards = () => {
             value: `Rs.${totalExpenses.toFixed(2)}`,
             subtitle: `Pending: Rs.${pendingPayments.toFixed(
               2
-            )} | Completed: Rs.${completedPayments.toFixed(2)}`,
+            )} | Completed: Rs.${completedPayments.toFixed(2)} | Reset on January 1`,
             icon: <Activity className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-slate-500 to-slate-700",
           },
@@ -492,5 +533,3 @@ const Cards = () => {
 };
 
 export default Cards;
-
-

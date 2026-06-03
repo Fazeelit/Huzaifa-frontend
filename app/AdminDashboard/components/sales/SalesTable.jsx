@@ -5,6 +5,16 @@ import SalesRow from "./SalesRow";
 import { apiRequest } from "./../../authservice/api";
 import { formatDateDDMMYYYY } from "../../utils/formatting";
 
+const getChargedSaleQuantity = (product = {}) =>
+  Math.max(
+    Number(product?.chargedQuantity ?? product?.quantity ?? product?.qty ?? 0) -
+      Number(product?.returnedQuantity || 0),
+    0
+  );
+
+const getDeductedSaleQuantity = (product = {}) =>
+  Math.max(Number(product?.quantity ?? product?.qty ?? 0) - Number(product?.returnedQuantity || 0), 0);
+
 const SalesTable = ({
   sales,
   search = "",
@@ -31,14 +41,9 @@ const SalesTable = ({
           const enriched = res.data.map((sale) => {
             const profit =
               sale.products?.reduce((sum, p) => {
-                const quantity = Math.max(
-                  Number(p.quantity || p.qty || 0) - Number(p.returnedQuantity || 0),
-                  0
-                );
-                return (
-                  sum +
-                  (Number(p.salePrice || 0) - Number(p.purchasePrice || 0)) * quantity
-                );
+                const chargedQuantity = getChargedSaleQuantity(p);
+                const deductedQuantity = getDeductedSaleQuantity(p);
+                return sum + Number(p.salePrice || 0) * chargedQuantity - Number(p.purchasePrice || 0) * deductedQuantity;
               }, 0) || 0;
             return { ...sale, profit };
           });

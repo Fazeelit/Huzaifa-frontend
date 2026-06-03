@@ -9,6 +9,13 @@ const toNumber = (value) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+const getChargedSaleQuantity = (item = {}) =>
+  Math.max(
+    toNumber(item.chargedQuantity ?? item.quantity ?? item.qty ?? 0) -
+      toNumber(item.returnedQuantity ?? 0),
+    0
+  );
+
 export default function InvoiceDetailsModal({
   sale,
   onClose,
@@ -36,9 +43,9 @@ export default function InvoiceDetailsModal({
 
   const items = Array.isArray(sale.products) ? sale.products : [];
   const rows = items.map((item, index) => {
-    const qty = toNumber(item.quantity ?? item.qty ?? 0);
+    const qty = toNumber(item.chargedQuantity ?? item.quantity ?? item.qty ?? 0);
     const returnedQty = toNumber(item.returnedQuantity ?? 0);
-    const soldQty = Math.max(qty - returnedQty, 0);
+    const soldQty = getChargedSaleQuantity(item);
     const returnableQty = soldQty;
     const salePrice = toNumber(item.salePrice ?? item.price ?? item.purchasePrice ?? item.cost ?? 0);
     const total = soldQty * salePrice;

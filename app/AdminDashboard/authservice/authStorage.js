@@ -3,6 +3,52 @@
 const AUTH_KEYS = ["authToken", "user", "role", "permissions"];
 const AUTH_STORAGE_EVENT = "auth-storage-changed";
 
+function normalizeAuthToken(value) {
+  if (value == null) {
+    return null;
+  }
+
+  let normalizedValue = String(value).trim();
+
+  if (
+    normalizedValue === "" ||
+    normalizedValue === "null" ||
+    normalizedValue === "undefined"
+  ) {
+    return null;
+  }
+
+  if (
+    (normalizedValue.startsWith('"') && normalizedValue.endsWith('"')) ||
+    (normalizedValue.startsWith("'") && normalizedValue.endsWith("'"))
+  ) {
+    normalizedValue = normalizedValue.slice(1, -1).trim();
+  }
+
+  if (normalizedValue.startsWith("{") || normalizedValue.startsWith("[")) {
+    try {
+      const parsedValue = JSON.parse(normalizedValue);
+      if (typeof parsedValue === "string") {
+        normalizedValue = parsedValue.trim();
+      } else {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  if (
+    !normalizedValue ||
+    normalizedValue.includes("[object Object]") ||
+    /\s/.test(normalizedValue)
+  ) {
+    return null;
+  }
+
+  return normalizedValue;
+}
+
 function normalizeStoredAuthValue(value) {
   if (value == null) {
     return null;
@@ -18,63 +64,7 @@ function normalizeStoredAuthValue(value) {
     return null;
   }
 
-  return value;
-}
-
-function extractAuthTokenCandidate(value) {
-  if (value == null) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    const trimmedValue = value.trim();
-
-    if (
-      trimmedValue === "" ||
-      trimmedValue === "null" ||
-      trimmedValue === "undefined" ||
-      trimmedValue === "[object Object]"
-    ) {
-      return null;
-    }
-
-    const bearerMatch = trimmedValue.match(/^Bearer\s+(.+)$/i);
-    if (bearerMatch?.[1]) {
-      return extractAuthTokenCandidate(bearerMatch[1]);
-    }
-
-    if (
-      (trimmedValue.startsWith("{") && trimmedValue.endsWith("}")) ||
-      (trimmedValue.startsWith("[") && trimmedValue.endsWith("]"))
-    ) {
-      try {
-        return extractAuthTokenCandidate(JSON.parse(trimmedValue));
-      } catch {
-        return trimmedValue;
-      }
-    }
-
-    return trimmedValue;
-  }
-
-  if (typeof value === "object") {
-    return (
-      extractAuthTokenCandidate(value.token) ||
-      extractAuthTokenCandidate(value.accessToken) ||
-      extractAuthTokenCandidate(value.jwt) ||
-      extractAuthTokenCandidate(value.data?.token) ||
-      extractAuthTokenCandidate(value.data?.accessToken) ||
-      extractAuthTokenCandidate(value.data?.jwt) ||
-      null
-    );
-  }
-
-  return null;
-}
-
-function normalizeAuthToken(value) {
-  const token = extractAuthTokenCandidate(value);
-  return typeof token === "string" ? token.trim() || null : null;
+  return normalizedValue;
 }
 
 function clearLegacySessionAuth() {
@@ -140,11 +130,11 @@ export function persistAuthState({ token, user, role, permissions }) {
   const normalizedPermissions = Array.isArray(permissions) ? permissions : [];
   const normalizedToken = normalizeAuthToken(token);
 
-  if (normalizedToken) {
-    browserAuthStorage.setItem("authToken", normalizedToken);
-  } else {
-    browserAuthStorage.removeItem("authToken");
+  if (!normalizedToken) {
+    throw new Error("Invalid login token");
   }
+
+  browserAuthStorage.setItem("authToken", normalizedToken);
   browserAuthStorage.setItem("user", JSON.stringify(user || null));
   browserAuthStorage.setItem("role", role || "");
   browserAuthStorage.setItem("permissions", JSON.stringify(normalizedPermissions));

@@ -30,13 +30,17 @@ const getQuantityMode = (item) => (item?.quantityMode === "pack" ? "pack" : "uni
 const getSelectedSalePrice = (item, quantityMode = getQuantityMode(item)) => {
   const wholeSalePrice = Number(item?.wholeSalePrice ?? item?.wholesalePrice ?? 0) || 0;
   const retailSalePrice = Number(item?.retailSalePrice ?? item?.salePrice ?? item?.price ?? item?.purchasePrice ?? item?.cost ?? 0) || 0;
+  const maxAllowedDiscount = Number(item?.maxAllowedDiscount ?? 0) || 0;
   const packSize = getPackSize(item);
+  const discountedRetailSalePrice = Number(
+    (retailSalePrice - (retailSalePrice * maxAllowedDiscount) / 100).toFixed(2)
+  );
 
   if (quantityMode === "pack") {
-    return wholeSalePrice || retailSalePrice;
+    return wholeSalePrice || discountedRetailSalePrice;
   }
 
-  return Number((retailSalePrice / packSize).toFixed(2));
+  return Number((discountedRetailSalePrice / packSize).toFixed(2));
 };
 
 const getDisplayQty = (item) => {
@@ -52,6 +56,7 @@ export default function ProductsCard({
   decreaseQty,
   updateQty,
   updateQuantityMode,
+  updateFreeQty,
   removeItem,
 }) {
   const [selectedProductKey, setSelectedProductKey] = useState("");
@@ -94,7 +99,10 @@ export default function ProductsCard({
     cart.forEach((item) => {
       const productKey = String(item?._id || item?.id || item?.name || "").trim().toLowerCase();
       if (!productKey) return;
-      salesMap.set(productKey, (salesMap.get(productKey) || 0) + (Number(item?.qty) || 0));
+      const packSize = getPackSize(item);
+      const freeQty = Math.max(Math.floor(Number(item?.freeQty) || 0), 0);
+      const freeUnits = getQuantityMode(item) === "pack" ? freeQty * packSize : freeQty;
+      salesMap.set(productKey, (salesMap.get(productKey) || 0) + (Number(item?.qty) || 0) + freeUnits);
     });
 
     return salesMap;
@@ -271,6 +279,7 @@ export default function ProductsCard({
               <thead className="bg-slate-50/90">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Product Name</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Menufacture</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Sale Type</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Quantity</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Retail Price</th>
@@ -320,8 +329,11 @@ export default function ProductsCard({
                           </p>
                         )}
                       </td>
-                       <td className="px-3 py-3 sm:px-4">
-                        <div className="flex min-w-[88px] items-center gap-2 text-xs">
+                       <td className="px-3 py-3 text-xs text-black sm:px-4">
+                        <p className="break-words">{item.manufacturer || "-"}</p>
+                      </td>
+                       <td className="px-2 py-3 sm:px-3">
+                        <div className="flex min-w-[60px] items-center gap-1.5 text-xs">
                           <select
                             value={quantityMode}
                             onChange={(event) => updateQuantityMode?.(item.key, event.target.value)}
@@ -334,8 +346,8 @@ export default function ProductsCard({
                           </select>
                         </div>
                       </td>
-                       <td className="px-3 py-3 sm:px-4">
-                         <div className="flex min-w-[120px] items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1">
+                       <td className="px-1 py-3 sm:px-1">
+                         <div className="flex min-w-[90px] items-center gap-1 rounded-lg border border-slate-200 px-1.5 py-1">
                           <button
                             type="button"
                             onClick={() => decreaseQty?.(item.key, 1)}
@@ -366,15 +378,29 @@ export default function ProductsCard({
                             <Plus className="h-3 w-3" />
                           </button>
                         </div>
+                        <div className="mt-2 flex items-center gap-1">
+                          <label className="shrink-0 font-bold text-[12px] font-bold text-black">Free</label>
+                          <input
+                            type="text"
+                            placeholder="0"
+                            inputMode="numeric"
+                            value={Number(item.freeQty) > 0 ? String(item.freeQty) : ""}
+                            onChange={(event) =>
+                              updateFreeQty?.(item.key, String(event.target.value || "").replace(/[^\d]/g, ""))
+                            }
+                            className="w-10 rounded-md border border-slate-300 px-1 py-1 font-bold text-[12px] text-black text-center outline-none focus:border-blue-300"
+                          />
+                        </div>
+                        
                       </td>
                        <td className="px-3 py-3 text-sm font-medium text-slate-900 sm:px-4">
-                        PKR {salePrice.toLocaleString()}
+                        <p className="break-words">PKR {salePrice.toLocaleString()}</p>
+                        <p className="mt-1 break-words text-xs font-medium text-slate-500">
+                          P.Prince: {unitPurchasePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
                       </td>
                        <td className="px-3 py-3 text-sm font-semibold text-blue-600 sm:px-4">
                          <p className="break-words">PKR {totalPrice.toLocaleString()}</p>
-                         <p className="mt-1 break-words text-xs font-medium text-slate-500">
-                          Total P. Price: {totalPurchasePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </p>
                       </td>
                        <td className="px-3 py-3 sm:px-4">
                         <button

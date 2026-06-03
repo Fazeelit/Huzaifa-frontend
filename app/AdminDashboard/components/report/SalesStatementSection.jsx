@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { apiRequest } from "../../authservice/api";
+import { hasPermission, parseStoredPermissions } from "../../authservice/permissions";
 
 const PAGE_SIZE = 10;
 
@@ -54,15 +55,19 @@ const formatDisplayDate = (value) => {
 
 const calculateProductProfit = (sale) =>
   sale?.products?.reduce((sum, product) => {
-    const quantity = Math.max(
+    const chargedQuantity = Math.max(
+      Number(product?.chargedQuantity ?? product?.quantity ?? product?.qty ?? 0) -
+        Number(product?.returnedQuantity || 0),
+      0
+    );
+    const deductedQuantity = Math.max(
       Number(product?.quantity || product?.qty || 0) - Number(product?.returnedQuantity || 0),
       0
     );
     const salePrice = Number(product?.salePrice || 0);
     const purchasePrice = Number(product?.purchasePrice || 0);
-    const unitProfit = Math.round(salePrice - purchasePrice);
 
-    return sum + unitProfit * quantity;
+    return sum + salePrice * chargedQuantity - purchasePrice * deductedQuantity;
   }, 0) || 0;
 
 const normalizeInvoiceKeys = (...values) => {
@@ -84,13 +89,6 @@ const normalizeInvoiceKeys = (...values) => {
 };
 
 const getCustomersArray = (response) =>
-  Array.isArray(response?.data)
-    ? response.data
-    : Array.isArray(response?.data?.data)
-    ? response.data.data
-    : [];
-
-const getSalesArray = (response) =>
   Array.isArray(response?.data)
     ? response.data
     : Array.isArray(response?.data?.data)
@@ -170,25 +168,34 @@ const SalesStatementSection = () => {
 
   useEffect(() => {
     const fetchSalesStatement = async () => {
+      const permissions = parseStoredPermissions();
+      const canSaleView = hasPermission("SALE_VIEW", permissions);
+
+      if (!canSaleView) {
+        setSales([]);
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
 
-        const salesRes = await apiRequest("/sales", { method: "GET" });
-        const rawSales = getSalesArray(salesRes);
-
-        let customerBillStatusMap = new Map();
-
-        try {
-          const customersRes = await apiRequest("/customers", {
+        const [salesRes, customersRes] = await Promise.all([
+          apiRequest("/sales", { method: "GET" }),
+          apiRequest("/customers", {
             method: "GET",
             suppressErrorLog: true,
             suppressErrorToast: true,
-          });
-          customerBillStatusMap = buildCustomerBillStatusMap(getCustomersArray(customersRes));
-        } catch (customerError) {
-          console.warn("Sales statement customer enrichment skipped:", customerError);
-        }
+          }),
+        ]);
 
+        const rawSales = Array.isArray(salesRes?.data)
+          ? salesRes.data
+          : Array.isArray(salesRes?.data?.data)
+          ? salesRes.data.data
+          : [];
+
+        const customerBillStatusMap = buildCustomerBillStatusMap(getCustomersArray(customersRes));
         setSales(rawSales.map((sale) => normalizeSale(sale, customerBillStatusMap)));
       } catch (error) {
         console.error("Failed to fetch sales statement data:", error);
@@ -341,8 +348,8 @@ const SalesStatementSection = () => {
           <p className="text-sm text-gray-500">Detailed statement of sales</p>
         </div>
 
-        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
-          <label className="flex w-full flex-col gap-1 text-xs font-medium text-gray-600 sm:w-auto">
+        <div className="flex flex-wrap items-end gap-2 sm:justify-end">
+          <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
             From
             <input
               type="date"
@@ -353,7 +360,7 @@ const SalesStatementSection = () => {
             />
           </label>
 
-          <label className="flex w-full flex-col gap-1 text-xs font-medium text-gray-600 sm:w-auto">
+          <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
             To
             <input
               type="date"
@@ -367,7 +374,7 @@ const SalesStatementSection = () => {
           <button
             type="button"
             onClick={handleExportSalesStatement}
-            className="h-9 w-full rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 sm:w-auto"
+            className="h-9 rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
           >
             Export Sales Statement
           </button>
@@ -375,7 +382,7 @@ const SalesStatementSection = () => {
       </div>
 
       <div className="overflow-x-auto border-t border-gray-100">
-        <table className="min-w-[1100px] divide-y divide-gray-200 text-xs">
+        <table className="min-w-full divide-y divide-gray-200 text-xs">
           <thead className="bg-gray-50">
             <tr>
               {[
@@ -412,7 +419,7 @@ const SalesStatementSection = () => {
                     {sale.reportDate ? sale.reportDate.toLocaleDateString("en-GB") : "-"}
                   </td>
                   <td className="whitespace-nowrap px-2 py-2 text-gray-700">{sale.customerLabel}</td>
-                  <td className="min-w-32 px-2 py-2 text-gray-700 break-words">{sale.productsLabel}</td>
+                  <td className="min-w-32 px-2 py-2 text-gray-700">{sale.productsLabel}</td>
                   <td className="whitespace-nowrap px-2 py-2 text-gray-700">{sale.paymentTypeLabel}</td>
                   <td className="whitespace-nowrap px-2 py-2 text-gray-700">
                     {formatCurrency(sale.cashSaleAmount)}
@@ -460,23 +467,23 @@ const SalesStatementSection = () => {
           Showing {pageStart} to {pageEnd} of {filteredSales.length} records
         </p>
 
-        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() => setPage((current) => Math.max(current - 1, 1))}
             disabled={page <= 1}
-            className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Prev
           </button>
-          <span className="text-center text-sm font-medium text-gray-700">
+          <span className="text-sm font-medium text-gray-700">
             Page {totalPages === 0 ? 0 : page} of {totalPages}
           </span>
           <button
             type="button"
             onClick={() => setPage((current) => Math.min(current + 1, totalPages))}
             disabled={page >= totalPages}
-            className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Next
           </button>

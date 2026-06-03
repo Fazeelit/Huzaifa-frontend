@@ -47,6 +47,14 @@ export default function POSPage() {
       : normalizedDisplayQty;
   };
 
+  const getMaxFreeDisplayQty = (item, displayQty, quantityMode = item?.quantityMode || "unit") => {
+    const soldUnits = getUnitsFromDisplayQty(item, displayQty, quantityMode);
+    const remainingUnits = Math.max((Number(item?.stock) || 0) - soldUnits, 0);
+    return quantityMode === "pack"
+      ? Math.floor(remainingUnits / getPackSize(item))
+      : Math.floor(remainingUnits);
+  };
+
   const normalizeCartItemQuantity = (item, displayQty, quantityMode = item?.quantityMode || "unit") => {
     const normalizedMode = quantityMode === "pack" ? "pack" : "unit";
     const maxDisplayQty = getMaxDisplayQty(item, normalizedMode);
@@ -61,11 +69,16 @@ export default function POSPage() {
     }
 
     const nextDisplayQty = Math.min(Math.max(Math.floor(Number(displayQty) || 1), 1), maxDisplayQty);
+    const nextFreeQty = Math.min(
+      Math.max(Math.floor(Number(item?.freeQty) || 0), 0),
+      getMaxFreeDisplayQty(item, nextDisplayQty, normalizedMode)
+    );
     return {
       ...item,
       quantityMode: normalizedMode,
       displayQty: nextDisplayQty,
       qty: getUnitsFromDisplayQty(item, nextDisplayQty, normalizedMode),
+      freeQty: nextFreeQty,
     };
   };
 
@@ -93,7 +106,12 @@ export default function POSPage() {
       const parsed = JSON.parse(draftRaw);
       const items = Array.isArray(parsed) ? parsed : parsed?.items;
       if (Array.isArray(items) && items.length) {
-        setCart(items);
+        setCart(
+          items.map((item) => ({
+            ...item,
+            freeQty: Math.max(Math.floor(Number(item?.freeQty) || 0), 0),
+          }))
+        );
       }
     } catch {
       // Ignore invalid local draft payloads.
@@ -125,6 +143,7 @@ export default function POSPage() {
           ...product,
           qty: 1,
           displayQty: 1,
+          freeQty: 0,
           quantityMode: "unit",
           key: uniqueKey,
           stock: availableStock,
@@ -187,6 +206,24 @@ export default function POSPage() {
     );
   };
 
+  const updateFreeQty = (key, nextFreeQty) => {
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.key !== key) return item;
+        const normalizedFreeQty = Math.max(Math.floor(Number(nextFreeQty) || 0), 0);
+        const maxFreeQty = getMaxFreeDisplayQty(
+          item,
+          Number(item.displayQty ?? 1) || 1,
+          item.quantityMode
+        );
+        return {
+          ...item,
+          freeQty: Math.min(normalizedFreeQty, maxFreeQty),
+        };
+      })
+    );
+  };
+
   if (loading) {
     return (
       <div className="min-h-[70vh] rounded-3xl border border-slate-200/70 bg-gradient-to-br from-sky-50 via-white to-emerald-50 flex items-center justify-center">
@@ -241,6 +278,7 @@ export default function POSPage() {
                 decreaseQty={decreaseQty}
                 updateQty={updateQty}
                 updateQuantityMode={updateQuantityMode}
+                updateFreeQty={updateFreeQty}
                 removeItem={removeItem}
               />
             </div>

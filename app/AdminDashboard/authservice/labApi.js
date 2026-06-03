@@ -7,28 +7,9 @@ const asList = (res) => {
   return [];
 };
 
-const isMissingLabRouteError = (error) => {
-  const status = error?.response?.status || error?.status;
-  const message = String(
-    error?.response?.data?.message ||
-      error?.response?.data?.error ||
-      error?.message ||
-      ""
-  ).toLowerCase();
-
-  return status === 404 || message.includes("api route not found");
-};
-
 export const listLabOrders = async (options = {}) => {
-  try {
-    const res = await apiRequest("/tests", options);
-    return asList(res);
-  } catch (error) {
-    if (isMissingLabRouteError(error)) {
-      return [];
-    }
-    throw error;
-  }
+  const res = await apiRequest("/tests", options);
+  return asList(res);
 };
 
 export const getLabOrderById = async (id, options = {}) =>

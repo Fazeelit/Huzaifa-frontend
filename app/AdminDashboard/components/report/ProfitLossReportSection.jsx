@@ -64,13 +64,18 @@ const getPaidTestFee = (test) => {
 
 const calculateProductProfit = (sale) =>
   sale?.products?.reduce((sum, product) => {
-    const quantity = Math.max(
+    const chargedQuantity = Math.max(
+      Number(product?.chargedQuantity ?? product?.quantity ?? product?.qty ?? 0) -
+        Number(product?.returnedQuantity || 0),
+      0
+    );
+    const deductedQuantity = Math.max(
       Number(product?.quantity || product?.qty || 0) - Number(product?.returnedQuantity || 0),
       0
     );
     const salePrice = Number(product?.salePrice || 0);
     const purchasePrice = Number(product?.purchasePrice || 0);
-    return sum + (salePrice - purchasePrice) * quantity;
+    return sum + salePrice * chargedQuantity - purchasePrice * deductedQuantity;
   }, 0) || 0;
 
 const normalizeSale = (sale) => ({
@@ -375,8 +380,8 @@ const ProfitLossReportSection = () => {
           </p>
         </div>
 
-        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
-          <label className="flex w-full flex-col gap-1 text-xs font-medium text-gray-600 sm:w-auto">
+        <div className="flex flex-wrap items-end gap-2 sm:justify-end">
+          <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
             From
             <input
               type="date"
@@ -387,7 +392,7 @@ const ProfitLossReportSection = () => {
             />
           </label>
 
-          <label className="flex w-full flex-col gap-1 text-xs font-medium text-gray-600 sm:w-auto">
+          <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
             To
             <input
               type="date"
@@ -401,36 +406,36 @@ const ProfitLossReportSection = () => {
           <button
             type="button"
             onClick={handleExportProfitLossReport}
-            className="h-9 w-full rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 sm:w-auto"
+            className="h-9 rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
           >
             Export Profit and Loss Report
           </button>
         </div>
       </div>
 
-      <div className="grid gap-4 border-t border-gray-100 p-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 border-t border-gray-100 p-6 md:grid-cols-3">
         <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">Total Income</p>
-          <p className="mt-2 break-words text-2xl font-semibold text-emerald-800">PKR {totalIncome.toFixed(2)}</p>
-          <p className="mt-1 break-words text-xs text-emerald-700">
+          <p className="mt-2 text-2xl font-semibold text-emerald-800">PKR {totalIncome.toFixed(2)}</p>
+          <p className="mt-1 text-xs text-emerald-700">
             PKR {totalSalesProfit.toFixed(2)} sales profit and PKR {totalTestFees.toFixed(2)} test income
           </p>
         </div>
 
         <div className="rounded-lg border border-rose-100 bg-rose-50 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-rose-700">Total Expenses</p>
-          <p className="mt-2 break-words text-2xl font-semibold text-rose-800">PKR {totalExpenses.toFixed(2)}</p>
-          <p className="mt-1 break-words text-xs text-rose-700">
+          <p className="mt-2 text-2xl font-semibold text-rose-800">PKR {totalExpenses.toFixed(2)}</p>
+          <p className="mt-1 text-xs text-rose-700">
             {expensesInRange.length} expense entries in the selected range
           </p>
         </div>
 
         <div className={`rounded-lg border p-4 ${netProfitLoss >= 0 ? "border-sky-100 bg-sky-50" : "border-amber-100 bg-amber-50"}`}>
           <p className={`text-xs font-medium uppercase tracking-wide ${netProfitLoss >= 0 ? "text-sky-700" : "text-amber-700"}`}>{netLabel}</p>
-          <p className={`mt-2 break-words text-2xl font-semibold ${netProfitLoss >= 0 ? "text-sky-800" : "text-amber-800"}`}>
+          <p className={`mt-2 text-2xl font-semibold ${netProfitLoss >= 0 ? "text-sky-800" : "text-amber-800"}`}>
             PKR {netProfitLoss.toFixed(2)}
           </p>
-          <p className={`mt-1 break-words text-xs ${netProfitLoss >= 0 ? "text-sky-700" : "text-amber-700"}`}>
+          <p className={`mt-1 text-xs ${netProfitLoss >= 0 ? "text-sky-700" : "text-amber-700"}`}>
             {salesInRange.length} sales contributed to this period result
           </p>
         </div>

@@ -6,6 +6,18 @@ import autoTable from "jspdf-autotable";
 import { apiRequest } from "../../authservice/api";
 import { hasPermission, parseStoredPermissions } from "../../authservice/permissions";
 import { Eye, EyeOff } from "lucide-react";
+import {
+  getSupplierPaymentDateValue,
+  getSupplierPaymentsArray,
+  getTotalSupplierPaidAmount,
+  getUnifiedSupplierPayments,
+  getSaleTotal,
+  isCashPaymentMethod,
+  isSupplierCashPaymentMethod,
+  isWalkInSale,
+  parseLocalDate,
+  toNumber as normalizeAmount,
+} from "../../utils/dailyCash";
 
 const formatDateInput = (date) => date.toISOString().split("T")[0];
 
@@ -30,39 +42,17 @@ const getCustomersArray = (response) =>
     ? response.data.customers
     : getArray(response);
 
-const parseLocalDate = (value) => {
-  if (!value) return null;
-
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : new Date(value);
-  }
-
-  const normalized = String(value).trim();
-  const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (isoMatch) {
-    const [, yyyy, mm, dd] = isoMatch;
-    const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-
-  const parsed = new Date(normalized);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-
-const normalizeAmount = (value) => {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  const normalized = String(value ?? "").replace(/,/g, "");
-  const match = normalized.match(/-?\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : 0;
-};
+const getSuppliersArray = (response) =>
+  Array.isArray(response?.suppliers)
+    ? response.suppliers
+    : Array.isArray(response?.data?.suppliers)
+    ? response.data.suppliers
+    : getArray(response);
 
 const normalizeSale = (sale) => ({
   ...sale,
   reportDate: parseLocalDate(sale?.createdAt || sale?.saleDate || sale?.date),
-  amountValue: normalizeAmount(sale?.totalAmount ?? sale?.grandTotal ?? sale?.paidAmount),
+  amountValue: getSaleTotal(sale),
   paidAmountValue: normalizeAmount(sale?.paidAmount ?? sale?.cashReceived),
   referenceLabel: sale?.invoiceNumber || sale?.invoiceNo || `INV-${String(sale?._id || "").slice(-6)}`,
   customerLabel: sale?.customerName || "Walk-in",
@@ -85,59 +75,14 @@ const normalizeCustomerPayment = (payment, customer) => ({
   methodLabel: payment?.method || payment?.paymentMethod || "N/A",
 });
 
-const getCustomerPaymentHistory = (customer) =>
-  Array.isArray(customer?.paymentHistory) ? customer.paymentHistory : [];
-
-const isToday = (date) => {
-  const parsed = parseLocalDate(date);
-  if (!parsed) return false;
-  return parsed.toDateString() === new Date().toDateString();
-};
-
-const isSameDay = (date, compareDate) => {
-  const parsed = parseLocalDate(date);
-  const compare = parseLocalDate(compareDate);
-  if (!parsed || !compare) return false;
-  return parsed.toDateString() === compare.toDateString();
-};
-
-const getSaleTotal = (sale) => {
-  const directTotal = normalizeAmount(
-    sale?.totalAmount ?? sale?.total ?? sale?.grandTotal ?? sale?.subtotal
-  );
-
-  if (directTotal > 0) {
-    return directTotal;
-  }
-
-  return sale?.products?.reduce((sum, product) => {
-    const unitPrice = normalizeAmount(product?.salePrice ?? product?.price);
-    const qty = normalizeAmount(product?.quantity ?? product?.qty);
-    return sum + unitPrice * qty;
-  }, 0) || 0;
-};
-
-const isWalkInSale = (sale) => {
-  const selectedCustomerType = String(sale?.selectedCustomer?.type || sale?.customer?.type || "")
-    .trim()
-    .toLowerCase();
-  const customerName = String(
-    sale?.customerName ?? sale?.selectedCustomer?.name ?? sale?.customer?.name ?? ""
-  )
-    .trim()
-    .toLowerCase();
-  const hasCustomerId = Boolean(sale?.customerId || sale?.selectedCustomer?.id || sale?.customer?._id || sale?.customer?.id);
-
-  if (selectedCustomerType) {
-    return selectedCustomerType === "walk-in" || selectedCustomerType === "walk in";
-  }
-
-  if (customerName) {
-    return customerName === "walk-in" || customerName === "walk in";
-  }
-
-  return !hasCustomerId;
-};
+const normalizeSupplierPayment = (payment) => ({
+  ...payment,
+  reportDate: parseLocalDate(getSupplierPaymentDateValue(payment)),
+  amountValue: normalizeAmount(payment?.paidAmount ?? payment?.amount ?? payment?.appliedAmount),
+  referenceLabel: payment?.reference || payment?.id || payment?._id || payment?.billId || "-",
+  methodLabel: payment?.method || payment?.paymentMethod || "N/A",
+  supplierLabel: payment?.supplierName || payment?.supplier?.name || payment?.name || "Supplier",
+});
 
 const CashReportSection = () => {
   const { start: defaultStart, end: defaultEnd } = buildDefaultDates();
@@ -146,6 +91,9 @@ const CashReportSection = () => {
   const [sales, setSales] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [supplierPayments, setSupplierPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showValues, setShowValues] = useState(false);
 
@@ -155,24 +103,41 @@ const CashReportSection = () => {
       const canSaleView = hasPermission("SALE_VIEW", permissions);
       const canExpenseView = hasPermission("EXPENSE_VIEW", permissions);
       const canCustomerView = hasPermission("CUSTOMER_VIEW", permissions);
+      const canSupplierView = hasPermission("SUPPLIER_VIEW", permissions);
+      const canPurchaseView = hasPermission("PURCHASE_VIEW", permissions);
 
       try {
         setLoading(true);
 
-        const [salesRes, expenseRes, customersRes] = await Promise.all([
+        const [salesRes, expenseRes, customersRes, suppliersRes, purchasesRes, supplierPaymentsRes] = await Promise.all([
           canSaleView ? apiRequest("/sales", { method: "GET" }) : Promise.resolve({ data: [] }),
           canExpenseView ? apiRequest("/expenses", { method: "GET" }) : Promise.resolve({ data: [] }),
           canCustomerView ? apiRequest("/customers", { method: "GET" }) : Promise.resolve({ customers: [] }),
+          canSupplierView ? apiRequest("/suppliers", { method: "GET" }) : Promise.resolve({ data: [] }),
+          canPurchaseView ? apiRequest("/purchases", { method: "GET" }) : Promise.resolve({ data: [] }),
+          canSupplierView
+            ? apiRequest("/supplierpayments", {
+                method: "GET",
+                suppressErrorToast: true,
+                suppressErrorLog: true,
+              })
+            : Promise.resolve({ data: [] }),
         ]);
 
         setSales(getArray(salesRes).map(normalizeSale));
         setExpenses(getArray(expenseRes).map(normalizeExpense));
         setCustomers(getCustomersArray(customersRes));
+        setSuppliers(getSuppliersArray(suppliersRes));
+        setPurchases(getArray(purchasesRes));
+        setSupplierPayments(getSupplierPaymentsArray(supplierPaymentsRes));
       } catch (error) {
         console.error("Failed to fetch cash report data:", error);
         setSales([]);
         setExpenses([]);
         setCustomers([]);
+        setSuppliers([]);
+        setPurchases([]);
+        setSupplierPayments([]);
       } finally {
         setLoading(false);
       }
@@ -185,17 +150,19 @@ const CashReportSection = () => {
     const start = parseLocalDate(startDate);
     const end = parseLocalDate(endDate);
 
-      if (!start || !end) {
-        return {
-          salesInRange: [],
-          expensesInRange: [],
-          customerPaymentsInRange: [],
-          totalWalkInSales: 0,
-          totalCustomerPaid: 0,
-          totalExpenses: 0,
-          netCash: 0,
-        };
-     }
+    if (!start || !end) {
+      return {
+        salesInRange: [],
+        expensesInRange: [],
+        customerPaymentsInRange: [],
+        supplierPaymentsInRange: [],
+        totalWalkInSales: 0,
+        totalCustomerPaid: 0,
+        totalSupplierPaid: 0,
+        totalExpenses: 0,
+        netCash: 0,
+      };
+    }
 
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
@@ -226,103 +193,60 @@ const CashReportSection = () => {
         )
     );
 
+    const supplierPaymentsInRange = getUnifiedSupplierPayments({
+      suppliers,
+      purchases,
+      supplierPayments,
+    })
+      .map((payment) => normalizeSupplierPayment(payment))
+      .filter(
+        (payment) =>
+          payment.reportDate &&
+          payment.reportDate >= start &&
+          payment.reportDate <= end &&
+          isSupplierCashPaymentMethod(payment.methodLabel)
+      );
+
     const totalWalkInSales = walkInSalesInRange.reduce(
       (sum, sale) => sum + sale.amountValue,
       0
     );
     const totalCustomerPaid = customerPaymentsInRange.reduce(
-      (sum, payment) => sum + payment.amountValue,
+      (sum, payment) =>
+        isCashPaymentMethod(payment.methodLabel) ? sum + payment.amountValue : sum,
       0
     );
+    const totalSupplierPaid = getTotalSupplierPaidAmount({
+      suppliers,
+      purchases,
+    });
     const totalExpenses = expensesInRange.reduce((sum, expense) => sum + expense.amountValue, 0);
+    const dailyCash =
+      totalWalkInSales + totalCustomerPaid - totalSupplierPaid - totalExpenses;
 
     return {
       salesInRange,
       walkInSalesInRange,
       expensesInRange,
       customerPaymentsInRange,
+      supplierPaymentsInRange,
       totalWalkInSales,
       totalCustomerPaid,
+      totalSupplierPaid,
       totalExpenses,
-      netCash: (totalWalkInSales + totalCustomerPaid) - totalExpenses,
+      netCash: dailyCash,
     };
-  }, [customers, endDate, expenses, sales, startDate]);
-
-  const dashboardCashSummary = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-
-    const todaysSales = sales.filter((sale) => isToday(sale.saleDate || sale.createdAt));
-    const todaysWalkInSales = todaysSales
-      .filter((sale) => isWalkInSale(sale))
-      .reduce((sum, sale) => sum + getSaleTotal(sale), 0);
-
-    const todaysCustomerPaid = customers.reduce(
-      (sum, customer) =>
-        sum +
-        getCustomerPaymentHistory(customer)
-          .filter((payment) => isToday(payment?.date || payment?.paymentDate || payment?.createdAt))
-          .reduce((paymentSum, payment) => paymentSum + normalizeAmount(payment?.amount), 0),
-      0
-    );
-
-    const todaysExpenses = expenses
-      .filter((expense) => isToday(expense.date || expense.createdAt))
-      .reduce((sum, expense) => sum + normalizeAmount(expense.amount || expense.totalamount), 0);
-
-    const yesterdaysSales = sales.filter((sale) =>
-      isSameDay(sale.saleDate || sale.createdAt, yesterday)
-    );
-
-    const yesterdaysWalkInSales = yesterdaysSales
-      .filter((sale) => isWalkInSale(sale))
-      .reduce((sum, sale) => sum + getSaleTotal(sale), 0);
-
-    const yesterdaysCustomerPaid = customers.reduce(
-      (sum, customer) =>
-        sum +
-        getCustomerPaymentHistory(customer)
-          .filter((payment) =>
-            isSameDay(payment?.date || payment?.paymentDate || payment?.createdAt, yesterday)
-          )
-          .reduce((paymentSum, payment) => paymentSum + normalizeAmount(payment?.amount), 0),
-      0
-    );
-
-    const yesterdaysExpenses = expenses
-      .filter((expense) => isSameDay(expense.date || expense.createdAt, yesterday))
-      .reduce((sum, expense) => sum + normalizeAmount(expense.amount || expense.totalamount), 0);
-
-    const previousDayDailyCash =
-      (yesterdaysWalkInSales + yesterdaysCustomerPaid) - yesterdaysExpenses;
-
-    return {
-      todaysWalkInSales,
-      todaysCustomerPaid,
-      todaysExpenses,
-      todaysNetPaidExpense: todaysCustomerPaid - todaysExpenses,
-      dailyCash: previousDayDailyCash + (todaysWalkInSales + todaysCustomerPaid) - todaysExpenses,
-      todaysWalkInSaleCount: todaysSales.filter((sale) => isWalkInSale(sale)).length,
-      todaysCustomerPaymentCount: customers.reduce(
-        (sum, customer) =>
-          sum +
-          getCustomerPaymentHistory(customer).filter((payment) =>
-            isToday(payment?.date || payment?.paymentDate || payment?.createdAt)
-          ).length,
-        0
-      ),
-    };
-  }, [customers, expenses, sales]);
+  }, [customers, endDate, expenses, sales, startDate, suppliers, purchases, supplierPayments]);
 
   const handleExportCashReport = () => {
     const {
       walkInSalesInRange,
       expensesInRange,
       customerPaymentsInRange,
+      supplierPaymentsInRange,
       totalWalkInSales,
       totalCustomerPaid,
+      totalSupplierPaid,
       totalExpenses,
       netCash,
     } = cashReport;
@@ -341,9 +265,10 @@ const CashReportSection = () => {
       tableWidth: 180,
       head: [["Metric", "Amount (PKR)"]],
       body: [
-        ["Today Walk-in Sale", totalWalkInSales.toFixed(2)],
-        ["Today Customer Paid", totalCustomerPaid.toFixed(2)],
-        ["Today Expense", totalExpenses.toFixed(2)],
+        ["Total Walk-in Sale", totalWalkInSales.toFixed(2)],
+        ["Total Customer Paid", totalCustomerPaid.toFixed(2)],
+        ["Total paid to suppliers", totalSupplierPaid.toFixed(2)],
+        ["Total Expense", totalExpenses.toFixed(2)],
         ["Daily Cash", netCash.toFixed(2)],
       ],
       styles: {
@@ -388,6 +313,17 @@ const CashReportSection = () => {
             payment.amountValue.toFixed(2),
           ],
         })),
+      ...supplierPaymentsInRange.map((payment) => ({
+        sortTime: payment.reportDate?.getTime() || 0,
+        row: [
+          "Supplier Paid",
+          payment.reportDate ? payment.reportDate.toLocaleDateString("en-IN") : "-",
+          payment.referenceLabel,
+          payment.supplierLabel,
+          payment.methodLabel,
+          payment.amountValue.toFixed(2),
+        ],
+      })),
       ...expensesInRange.map((expense) => ({
         sortTime: expense.reportDate?.getTime() || 0,
         row: [
@@ -447,14 +383,16 @@ const CashReportSection = () => {
   }
 
   const {
-    todaysWalkInSales,
-    todaysCustomerPaid,
-    todaysExpenses,
-    todaysNetPaidExpense,
-    dailyCash: dashboardDailyCash,
-    todaysWalkInSaleCount,
-    todaysCustomerPaymentCount,
-  } = dashboardCashSummary;
+    walkInSalesInRange,
+    expensesInRange,
+    customerPaymentsInRange,
+    supplierPaymentsInRange,
+    totalWalkInSales,
+    totalCustomerPaid,
+    totalSupplierPaid,
+    totalExpenses,
+    netCash,
+  } = cashReport;
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white/80 shadow-lg backdrop-blur">
@@ -465,18 +403,18 @@ const CashReportSection = () => {
             {startDate} to {endDate}
           </p>
           <p className="text-sm font-medium text-gray-700">
-            Daily Cash: Rs.{dashboardDailyCash.toFixed(2)}
+            Daily Cash: PKR {netCash.toFixed(2)}
           </p>
           <p className="text-xs text-gray-500">
-            Yesterday daily cash + today's net cash activity
+            Formula: previous positive daily cash + walk-in sale + customer paid - supplier paid - expense
           </p>
         </div>
 
-        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
+        <div className="flex flex-wrap items-end gap-2 sm:justify-end">
           <button
             type="button"
             onClick={() => setShowValues((prev) => !prev)}
-            className="h-9 w-full rounded-full border border-slate-200 bg-white/90 px-4 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 sm:w-auto"
+            className="h-9 rounded-full border border-slate-200 bg-white/90 px-4 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
           >
             <span className="inline-flex items-center gap-2">
               {showValues ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -484,7 +422,7 @@ const CashReportSection = () => {
             </span>
           </button>
 
-          <label className="flex w-full flex-col gap-1 text-xs font-medium text-gray-600 sm:w-auto">
+          <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
             From
             <input
               type="date"
@@ -495,7 +433,7 @@ const CashReportSection = () => {
             />
           </label>
 
-          <label className="flex w-full flex-col gap-1 text-xs font-medium text-gray-600 sm:w-auto">
+          <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
             To
             <input
               type="date"
@@ -509,38 +447,62 @@ const CashReportSection = () => {
           <button
             type="button"
             onClick={handleExportCashReport}
-            className="h-9 w-full rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 sm:w-auto"
+            className="h-9 rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
           >
             Export Cash Report
           </button>
         </div>
       </div>
 
-      <div className="grid gap-4 border-t border-gray-100 p-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 border-t border-gray-100 p-6 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">Walk-in Sale</p>
-          <p className="mt-2 break-words text-2xl font-semibold text-emerald-800">
-            {showValues ? `PKR ${todaysWalkInSales.toFixed(2)}` : "PKR ****"}
+          <p className="mt-2 text-2xl font-semibold text-emerald-800">
+            {showValues ? `PKR ${totalWalkInSales.toFixed(2)}` : "PKR ****"}
           </p>
-          <p className="mt-1 break-words text-xs text-emerald-700">{todaysWalkInSaleCount} walk-in sale transactions today</p>
+          <p className="mt-1 text-xs text-emerald-700">{walkInSalesInRange.length} walk-in sale transactions in the selected date window</p>
+        </div>
+
+        <div className="rounded-lg border border-amber-100 bg-amber-50 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-amber-700">Customer Paid</p>
+          <p className="mt-2 text-2xl font-semibold text-rose-800">
+            {showValues ? `PKR ${totalCustomerPaid.toFixed(2)}` : "PKR ****"}
+          </p>
+          <p className="mt-1 text-xs text-amber-700">
+            {customerPaymentsInRange.length} cash customer payments added to daily cash
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-violet-100 bg-violet-50 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-violet-700">Paid to Suppliers</p>
+          <p className="mt-2 text-2xl font-semibold text-violet-800">
+            {showValues ? `PKR ${totalSupplierPaid.toFixed(2)}` : "PKR ****"}
+          </p>
+          <p className="mt-1 text-xs text-violet-700">
+            Based on supplier table paid totals, deducted from daily cash
+          </p>
         </div>
 
         <div className="rounded-lg border border-rose-100 bg-rose-50 p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-rose-700">Paid - Expense View</p>
-          <p className="mt-2 break-words text-2xl font-semibold text-rose-800">
-            {showValues ? `PKR ${todaysNetPaidExpense.toFixed(2)}` : "PKR ****"}
+          <p className="text-xs font-medium uppercase tracking-wide text-rose-700">Expense</p>
+          <p className="mt-2 text-2xl font-semibold text-rose-800">
+            {showValues ? `PKR ${totalExpenses.toFixed(2)}` : "PKR ****"}
           </p>
-          <p className="mt-1 break-words text-xs text-rose-700">
-            {todaysCustomerPaymentCount} customer payments | Paid: PKR {showValues ? todaysCustomerPaid.toFixed(2) : "****"} | Expense: PKR {showValues ? todaysExpenses.toFixed(2) : "****"}
+          <p className="mt-1 text-xs text-rose-700">
+            {expensesInRange.length} expense entries deducted from daily cash
           </p>
         </div>
+      </div>
 
+      <div className="border-t border-gray-100 px-6 pb-6">
         <div className="rounded-lg border border-sky-100 bg-sky-50 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-sky-700">Daily Cash</p>
-          <p className="mt-2 break-words text-2xl font-semibold text-sky-800">
-            {showValues ? `Rs.${dashboardDailyCash.toFixed(2)}` : "Rs.****"}
+          <p className="mt-2 text-2xl font-semibold text-sky-800">
+            {showValues ? `PKR ${netCash.toFixed(2)}` : "PKR ****"}
           </p>
-          <p className="mt-1 break-words text-xs text-sky-700">Yesterday daily cash + today's net cash activity</p>
+          <p className="mt-1 text-xs text-sky-700">
+            Previous positive daily cash + walk-in sale + customer paid - supplier paid - expense
+          </p>
         </div>
       </div>
     </div>

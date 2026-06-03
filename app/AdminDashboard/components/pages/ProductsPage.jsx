@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Package,
   PackageCheck,
@@ -85,6 +85,53 @@ export default function ProductsPage() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
+
+  const inventoryProducts = useMemo(() => {
+    const map = new Map();
+
+    products.forEach((product) => {
+      const key = String(product?.name || "").trim().toLowerCase();
+      if (!key) {
+        return;
+      }
+
+      const stock = Number(product?.stock ?? 0);
+      const retailSalePrice = Number(
+        product?.retailSalePrice ?? product?.salePrice ?? product?.price ?? 0
+      );
+      const purchasePrice = Number(product?.purchasePrice ?? product?.cost ?? 0);
+
+      if (map.has(key)) {
+        const existing = map.get(key);
+        map.set(key, {
+          ...existing,
+          stock: existing.stock + stock,
+          retailSalePrice:
+            retailSalePrice || existing.retailSalePrice || 0,
+          purchasePrice: purchasePrice || existing.purchasePrice || 0,
+          discountAllowed:
+            typeof product?.discountAllowed === "boolean"
+              ? product.discountAllowed
+              : existing.discountAllowed,
+          maxAllowedDiscount:
+            Number(product?.maxAllowedDiscount ?? 0) ||
+            Number(existing.maxAllowedDiscount ?? 0),
+        });
+        return;
+      }
+
+      map.set(key, {
+        ...product,
+        stock,
+        retailSalePrice,
+        purchasePrice,
+        discountAllowed: Boolean(product?.discountAllowed),
+        maxAllowedDiscount: Number(product?.maxAllowedDiscount ?? 0),
+      });
+    });
+
+    return Array.from(map.values());
+  }, [products]);
 
   /* ---------------- FILTERING ---------------- */
   const filteredProducts = products.filter((p) => {
@@ -173,19 +220,40 @@ export default function ProductsPage() {
   };
 
   /* ---------------- STATS ---------------- */
-  const inStockProducts = products.filter((p) => Number(p.stock) >= 1);
-  const totalPurchaseAmount = products.reduce((sum, product) => {
+  const inStockProducts = inventoryProducts.filter((p) => Number(p.stock) >= 1);
+  const totalRetailSalesAmount = inventoryProducts.reduce((sum, product) => {
+    const retailSalePrice = Number(
+      product.retailSalePrice ?? product.salePrice ?? product.price ?? 0
+    );
+    const stock = Number(product.stock ?? 0);
+    return sum + retailSalePrice * stock;
+  }, 0);
+  const totalPurchaseAmount = inventoryProducts.reduce((sum, product) => {
     const purchasePrice = Number(product.purchasePrice ?? product.cost ?? 0);
     const stock = Number(product.stock ?? 0);
     return sum + purchasePrice * stock;
   }, 0);
-  const expectedProfit = products.reduce((sum, product) => {
+  const totalProfit = totalRetailSalesAmount - totalPurchaseAmount;
+  const totalDiscountAmount = inventoryProducts.reduce((sum, product) => {
+    if (!product.discountAllowed) {
+      return sum;
+    }
+
+    const retailSalePrice = Number(
+      product.retailSalePrice ?? product.salePrice ?? product.price ?? 0
+    );
     const purchasePrice = Number(product.purchasePrice ?? product.cost ?? 0);
-    const salePrice = Number(product.salePrice ?? product.price ?? 0);
     const stock = Number(product.stock ?? 0);
-    const perUnitExpectedProfit = (salePrice - purchasePrice) * 0.5;
-    return sum + perUnitExpectedProfit * stock;
+    const grossProfit = (retailSalePrice - purchasePrice) * stock;
+    const discountPercent = Number(product.maxAllowedDiscount ?? 0);
+
+    if (!Number.isFinite(discountPercent) || discountPercent <= 0) {
+      return sum;
+    }
+
+    return sum + grossProfit * (discountPercent / 100);
   }, 0);
+  const expectedProfit = totalProfit - totalDiscountAmount;
 
   const stats = [
     {
@@ -208,7 +276,7 @@ export default function ProductsPage() {
     },
     {
       title: "Out of Stock",
-      count: products.filter((p) => Number(p.stock) === 0).length,
+      count: inventoryProducts.filter((p) => Number(p.stock) === 0).length,
       color: "red",
       Icon: TrendingDown,
     },

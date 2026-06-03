@@ -71,6 +71,12 @@ const inferDiscountPercentageLabel = (subtotal, discount) => {
   return Number.isInteger(calculated) ? calculated.toFixed(0) : calculated.toFixed(2);
 };
 
+const getChargedSaleQuantity = (product = {}) => {
+  const baseQuantity = Number(product?.chargedQuantity ?? product?.quantity ?? product?.qty ?? 0);
+  const returnedQuantity = Number(product?.returnedQuantity || 0);
+  return Math.max(baseQuantity - returnedQuantity, 0);
+};
+
 const toNumber = (value) => {
   if (typeof value === "number") return value;
   const normalized = String(value || "").replace(/,/g, "");
@@ -539,9 +545,8 @@ const SalesPage = () => {
             const products = Array.isArray(s.products) ? s.products : [];
             const soldProducts = products
               .map((p) => {
-                const qty = Number(p.quantity || p.qty || 0);
-                const returnedQty = Number(p.returnedQuantity || 0);
-                const soldQty = Math.max(qty - returnedQty, 0);
+                const qty = getChargedSaleQuantity(p);
+                const soldQty = qty;
                 return { ...p, soldQty };
               })
               .filter((p) => p.soldQty > 0);
@@ -587,13 +592,14 @@ const SalesPage = () => {
                       <tbody>
                         ${soldProducts
                           .map((item, idx) => {
-                            const qty = Number(item.soldQty || 0);
+                            const qty = Number(item.chargedDisplayQty ?? item.soldQty ?? 0);
+                            const freeQty = Math.max(Math.floor(Number(item.freeQty) || 0), 0);
                             const price = Number(item.salePrice || item.price || 0);
                             const lineTotal = price * qty;
 
                             return `
                               <tr class="product-row" key="${item._id || item.id || idx}">
-                                <td class="item-name">${item.name || "-"}</td>
+                                <td class="item-name">${item.name || "-"}${freeQty > 0 ? `<div class="item-subtext">Free: ${freeQty}</div>` : ""}</td>
                                 <td>${qty}</td>
                                 <td> ${price.toLocaleString()}</td>
                                 <td> ${lineTotal.toLocaleString()}</td>

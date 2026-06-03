@@ -33,7 +33,12 @@ const calculateSaleProfit = (sale, products) =>
       (item) =>
         item._id === productLine.productId || item.name === productLine.name
     );
-    const quantity = Math.max(
+    const chargedQuantity = Math.max(
+      Number(productLine.chargedQuantity ?? productLine.quantity ?? productLine.qty ?? 0) -
+        Number(productLine.returnedQuantity ?? 0),
+      0
+    );
+    const deductedQuantity = Math.max(
       Number(productLine.quantity ?? productLine.qty ?? 0) -
         Number(productLine.returnedQuantity ?? 0),
       0
@@ -53,7 +58,7 @@ const calculateSaleProfit = (sale, products) =>
         0
     );
 
-    return sum + (unitPrice - unitCost) * quantity;
+    return sum + unitPrice * chargedQuantity - unitCost * deductedQuantity;
   }, 0) || 0;
 
 const RevenueBreakdown = () => {
@@ -149,7 +154,7 @@ const RevenueBreakdown = () => {
         {revenueItems.map((item) => (
           <div key={item.label} className={`rounded-xl p-4 text-center ${item.bg}`}>
             <p className="mb-1 text-sm text-slate-600">{item.label}</p>
-            <p className={`break-words text-2xl font-bold ${item.text}`}>{item.value}</p>
+            <p className={`text-2xl font-bold ${item.text}`}>{item.value}</p>
           </div>
         ))}
       </div>

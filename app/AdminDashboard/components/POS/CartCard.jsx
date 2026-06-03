@@ -51,20 +51,28 @@ const getPackSize = (item) => {
 
 const getUnitSalePrice = (item) => {
   const baseSalePrice = Number(item?.salePrice || item?.price || item?.purchasePrice || item?.cost) || 0;
-  return Number((baseSalePrice / getPackSize(item)).toFixed(2));
+  const maxAllowedDiscount = Number(item?.maxAllowedDiscount ?? 0) || 0;
+  const discountedSalePrice = Number(
+    (baseSalePrice - (baseSalePrice * maxAllowedDiscount) / 100).toFixed(2)
+  );
+  return Number((discountedSalePrice / getPackSize(item)).toFixed(2));
 };
 
 const getSelectedSalePrice = (item) => {
   const quantityMode = item?.quantityMode === "pack" ? "pack" : "unit";
   const wholeSalePrice = Number(item?.wholeSalePrice ?? item?.wholesalePrice ?? 0) || 0;
   const retailSalePrice = Number(item?.retailSalePrice ?? item?.salePrice ?? item?.price ?? item?.purchasePrice ?? item?.cost ?? 0) || 0;
+  const maxAllowedDiscount = Number(item?.maxAllowedDiscount ?? 0) || 0;
   const packSize = getPackSize(item);
+  const discountedRetailSalePrice = Number(
+    (retailSalePrice - (retailSalePrice * maxAllowedDiscount) / 100).toFixed(2)
+  );
 
   if (quantityMode === "pack") {
-    return wholeSalePrice || retailSalePrice;
+    return wholeSalePrice || discountedRetailSalePrice;
   }
 
-  return Number((retailSalePrice / packSize).toFixed(2));
+  return Number((discountedRetailSalePrice / packSize).toFixed(2));
 };
 
 const sanitizeNumericInput = (value) => String(value || "").replace(/[^\d.]/g, "");
@@ -85,14 +93,29 @@ const getLinePurchaseTotal = (item) => {
   return Number((getDisplayUnitPurchasePrice(item) * units).toFixed(2));
 };
 
+const getFreeUnits = (item) => {
+  const freeQty = Math.max(Math.floor(Number(item?.freeQty) || 0), 0);
+  const quantityMode = item?.quantityMode === "pack" ? "pack" : "unit";
+  return quantityMode === "pack" ? freeQty * getPackSize(item) : freeQty;
+};
+
+const getChargedUnits = (item) => Number(item?.qty) || 0;
+
 const toSaleLine = (item) => {
   const unitSalePrice = getUnitSalePrice(item);
   const unitPurchasePrice = getDisplayUnitPurchasePrice(item);
+  const chargedUnits = getChargedUnits(item);
+  const freeUnits = getFreeUnits(item);
 
   return {
     productId: item?._id || item?.id,
     name: typeof item?.name === "string" ? item.name : "",
-    quantity: Number(item?.qty) || 0,
+    quantity: chargedUnits + freeUnits,
+    chargedQuantity: chargedUnits,
+    chargedDisplayQty: Number(item?.displayQty ?? item?.qty ?? 0) || 0,
+    freeQty: Math.max(Math.floor(Number(item?.freeQty) || 0), 0),
+    freeQuantity: freeUnits,
+    quantityMode: item?.quantityMode === "pack" ? "pack" : "unit",
     purchasePrice: unitPurchasePrice,
     salePrice: unitSalePrice,
     packSize: getPackSize(item),
@@ -164,7 +187,6 @@ const buildReceiptHtml = ({
   items,
   subtotal,
   discount,
-  discountPercentageLabel,
   total,
   paidAmount,
   returnAmount,
@@ -421,9 +443,10 @@ const buildReceiptHtml = ({
                   ${items
                     .map((item, idx) => {
                       const qty = Number(item.displayQty ?? item.qty ?? 0);
+                      const freeQty = Math.max(Math.floor(Number(item.freeQty) || 0), 0);
                       const salePrice = getSelectedSalePrice(item);
                       const lineTotal = getLineTotal(item);
-                      const itemLabel = item.name || "-";
+                      const itemLabel = `${item.name || "-"}${freeQty > 0 ? `<div class="item-subtext">Free: ${freeQty}</div>` : ""}`;
                       return `
                         <tr class="product-row" key="${item._id || item.id || idx}">
                           <td class="item-name">${itemLabel}</td>
@@ -441,7 +464,7 @@ const buildReceiptHtml = ({
                   ${discount > 0
                     ? `
                       <tr>
-                        <td colspan="3" class="summary-label">Discount ( ${discountPercentageLabel}%):</td>
+                        <td colspan="3" class="summary-label">Discount:</td>
                         <td class="summary-value">- ${Number(discount || 0).toLocaleString()}</td>
                       </tr>
                     `
@@ -564,16 +587,12 @@ export default function CartCard({ cart, removeItem, increaseQty, decreaseQty })
     () => Number(items.reduce((sum, item) => sum + getLinePurchaseTotal(item), 0).toFixed(2)),
     [items]
   );
-  const enteredDiscountPercentage = amount === "" ? 0 : Number(amount || 0);
-  const discountPercentage = Math.min(
-    Math.max(Number.isFinite(enteredDiscountPercentage) ? enteredDiscountPercentage : 0, 0),
-    100
+  const enteredDiscountAmount = amount === "" ? 0 : Number(amount || 0);
+  const discount = Math.min(
+    Math.max(Number.isFinite(enteredDiscountAmount) ? enteredDiscountAmount : 0, 0),
+    subtotal
   );
-  const discount = Math.round((subtotal * discountPercentage) / 100);
   const totalAmount = Math.max(Number((subtotal - discount).toFixed(2)), 0);
-  const discountPercentageLabel = Number.isInteger(discountPercentage)
-    ? discountPercentage.toFixed(0)
-    : discountPercentage.toFixed(2);
   const paid = Number(paidAmount || 0);
   const isWalkInCustomer = selectedCustomer?.type === "walk-in";
   const isCreditCustomer = Boolean(selectedCustomer) && !isWalkInCustomer;
@@ -710,7 +729,10 @@ export default function CartCard({ cart, removeItem, increaseQty, decreaseQty })
       items.forEach((item) => {
         const key = normalizeName(item?.name || "");
         if (!key) return;
-        requestedByName.set(key, (requestedByName.get(key) || 0) + Number(item?.qty || 0));
+        requestedByName.set(
+          key,
+          (requestedByName.get(key) || 0) + getChargedUnits(item) + getFreeUnits(item)
+        );
       });
 
       const insufficient = items.find((item) => {
@@ -774,7 +796,6 @@ export default function CartCard({ cart, removeItem, increaseQty, decreaseQty })
             items,
             subtotal,
             discount,
-            discountPercentageLabel,
             total: totalAmount,
             paidAmount: effectivePaidAmount,
             returnAmount,
@@ -861,13 +882,13 @@ export default function CartCard({ cart, removeItem, increaseQty, decreaseQty })
             </div>
             <div className="space-y-2 border-t border-slate-200 p-3 sm:p-4">
             <div className="flex items-start justify-between gap-3 text-xs"><span className="text-slate-600">Subtotal</span><span className="break-words text-right text-slate-900"> {subtotal.toFixed(2)}</span></div>
-            <div className="flex items-start justify-between gap-3 text-xs font-medium"><span className="text-red-600">Discount (i.e {discountPercentageLabel}%):</span><span className="break-words text-right text-red-600">-{discount.toFixed(2)}</span></div>
+            <div className="flex items-start justify-between gap-3 text-xs font-medium"><span className="text-red-600">Discount</span><span className="break-words text-right text-red-600">-{discount.toFixed(2)}</span></div>
             <div className="border-t border-slate-200 pt-2"><div className="flex items-start justify-between gap-3 text-base font-bold"><span className="text-slate-900">Total</span><span className="break-words text-right text-blue-600"> {totalAmount.toFixed(2)}</span></div></div>
             <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
               <h3 className="mb-3 text-xs font-semibold text-slate-900">Payment Detail</h3>
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2 text-xs">
-                  <span className="text-slate-600">Discount (%)</span>
+                  <span className="text-slate-600">Discount</span>
                   <input type="text" inputMode="decimal" value={amount} onChange={(event) => setAmount(sanitizeNumericInput(event.target.value))} className="w-20 shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-right text-xs sm:w-24" />
                 </div>
                 <div className="flex items-center justify-between gap-2 text-xs">

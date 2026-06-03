@@ -11,9 +11,9 @@ import PeriodSummary from "../report/PeriodSummary";
 
 const ReportsPage = () => {
   return (
-    <main className="mx-auto w-full max-w-full space-y-5 p-3 sm:p-4 lg:max-w-4xl">
+    <main className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold sm:text-2xl">Reports & Analytics</h1>
+        <h1 className="text-3xl font-bold">Reports & Analytics</h1>
       </div>
 
       <SummaryCards />

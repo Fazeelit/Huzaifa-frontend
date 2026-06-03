@@ -274,8 +274,8 @@ const ExpensesCategoryChart = () => {
           </p>
         </div>
 
-        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
-          <label className="flex w-full flex-col gap-1 text-xs font-medium text-gray-600 sm:w-auto">
+        <div className="flex flex-wrap items-end gap-2 sm:justify-end">
+          <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
             From
             <input
               type="date"
@@ -286,7 +286,7 @@ const ExpensesCategoryChart = () => {
             />
           </label>
 
-          <label className="flex w-full flex-col gap-1 text-xs font-medium text-gray-600 sm:w-auto">
+          <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
             To
             <input
               type="date"
@@ -300,14 +300,14 @@ const ExpensesCategoryChart = () => {
           <button
             type="button"
             onClick={handleExportExpenseReport}
-            className="h-9 w-full rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 sm:w-auto"
+            className="h-9 rounded-md bg-blue-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
           >
             Export Expense Report
           </button>
         </div>
       </div>
 
-      <div ref={chartHostRef} className="h-64 min-h-64 w-full min-w-0 overflow-hidden p-4 pt-0 sm:h-72 sm:min-h-72 sm:p-6 sm:pt-0">
+      <div ref={chartHostRef} className="h-72 min-h-72 w-full min-w-0 overflow-hidden p-6 pt-0">
         {chartData.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-gray-600">
             No expense data available for the selected date range
