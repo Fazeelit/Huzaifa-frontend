@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { toast } from "react-hot-toast";
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -21,6 +22,11 @@ import TopBar from "./TopBar";
 import { hasAnyPermission, hasModuleAccess } from "../authservice/permissions";
 import { getFirstAllowedRoute } from "../authservice/navigation";
 import { onAuthStateChanged, readPersistedAuthValue } from "../authservice/authStorage";
+import {
+  getPendingCrudCount,
+  subscribeToCrudSync,
+  syncPendingCrudOperations,
+} from "../authservice/api";
 
 function parsePermissions(value) {
   if (!value) {
@@ -35,6 +41,69 @@ function parsePermissions(value) {
   }
 }
 
+const ROUTES = {
+  "/AdminDashboard": {
+    title: "Dashboard",
+    icon: LayoutDashboard,
+    permission: "DASHBOARD_VIEW",
+  },
+  "/AdminDashboard/pos": {
+    title: "POS",
+    icon: ShoppingCart,
+    moduleKey: "POS",
+  },
+  "/AdminDashboard/customers": {
+    title: "Customers",
+    icon: Users,
+    moduleKey: "CUSTOMER",
+  },
+  "/AdminDashboard/products": {
+    title: "Products",
+    icon: Package,
+    moduleKey: "PRODUCT",
+  },
+  "/AdminDashboard/purchases": {
+    title: "Purchases",
+    icon: PackagePlus,
+    moduleKey: "PURCHASE",
+  },
+  "/AdminDashboard/suppliers": {
+    title: "Suppliers",
+    icon: Layers,
+    moduleKey: "SUPPLIER",
+  },
+  "/AdminDashboard/sales": {
+    title: "Sales",
+    icon: Receipt,
+    moduleKey: "SALE",
+  },
+  "/AdminDashboard/tests": {
+    title: "Tests",
+    icon: FlaskConical,
+    permission: "TEST_VIEW",
+  },
+  "/AdminDashboard/expenses": {
+    title: "Expenses",
+    icon: Wallet,
+    moduleKey: "EXPENSE",
+  },
+  "/AdminDashboard/reports": {
+    title: "Reports",
+    icon: BarChart3,
+    permission: "REPORT_VIEW",
+  },
+  "/AdminDashboard/users": {
+    title: "Users",
+    icon: UserCog,
+    moduleKey: "USER",
+  },
+  "/AdminDashboard/roles": {
+    title: "Roles",
+    icon: ShieldCheck,
+    moduleKey: "ROLE",
+  },
+};
+
 export default function MainLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -44,6 +113,10 @@ export default function MainLayout({ children }) {
   const [role, setRole] = useState(null);
   const [permissions, setPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  const pendingSyncCountRef = useRef(0);
+  const syncingRef = useRef(false);
 
   const handleTopbarIconClick = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
@@ -56,6 +129,21 @@ export default function MainLayout({ children }) {
   useEffect(() => {
     setMobileSidebarOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    setPendingSyncCount(getPendingCrudCount());
+    return subscribeToCrudSync(({ pendingCount = 0 } = {}) => {
+      setPendingSyncCount(pendingCount);
+    });
+  }, []);
+
+  useEffect(() => {
+    pendingSyncCountRef.current = pendingSyncCount;
+  }, [pendingSyncCount]);
+
+  useEffect(() => {
+    syncingRef.current = syncing;
+  }, [syncing]);
 
   /* ================= LOAD AUTH ================= */
   useEffect(() => {
@@ -83,70 +171,6 @@ export default function MainLayout({ children }) {
     loadAuth();
     return onAuthStateChanged(loadAuth);
   }, [router]);
-
-  /* ================= ROUTE CONFIG ================= */
-  const ROUTES = {
-    "/AdminDashboard": {
-      title: "Dashboard",
-      icon: LayoutDashboard,
-      permission: "DASHBOARD_VIEW",
-    },
-    "/AdminDashboard/pos": {
-      title: "POS",
-      icon: ShoppingCart,
-      moduleKey: "POS",
-    },
-    "/AdminDashboard/customers": {
-      title: "Customers",
-      icon: Users,
-      moduleKey: "CUSTOMER",
-    },
-    "/AdminDashboard/products": {
-      title: "Products",
-      icon: Package,
-      moduleKey: "PRODUCT",
-    },
-    "/AdminDashboard/purchases": {
-      title: "Purchases",
-      icon: PackagePlus,
-      moduleKey: "PURCHASE",
-    },
-    "/AdminDashboard/suppliers": {
-      title: "Suppliers",
-      icon: Layers,
-      moduleKey: "SUPPLIER",
-    },
-    "/AdminDashboard/sales": {
-      title: "Sales",
-      icon: Receipt,
-      moduleKey: "SALE",
-    },
-    "/AdminDashboard/tests": {
-      title: "Tests",
-      icon: FlaskConical,
-      permission: "TEST_VIEW",
-    },
-    "/AdminDashboard/expenses": {
-      title: "Expenses",
-      icon: Wallet,
-      moduleKey: "EXPENSE",
-    },
-    "/AdminDashboard/reports": {
-      title: "Reports",
-      icon: BarChart3,
-      permission: "REPORT_VIEW",
-    },
-    "/AdminDashboard/users": {
-      title: "Users",
-      icon: UserCog,
-      moduleKey: "USER",
-    },
-    "/AdminDashboard/roles": {
-      title: "Roles",
-      icon: ShieldCheck,
-      moduleKey: "ROLE",
-    },
-  };
 
   /* ================= MATCH ROUTE ================= */
   const matchedRoute = useMemo(() => {
@@ -195,6 +219,53 @@ export default function MainLayout({ children }) {
     }
   }, [hasAccess, loading, pathname, permissions, router]);
 
+  const performSync = async ({ silentWhenEmpty = false, autoTriggered = false } = {}) => {
+    if (syncingRef.current) {
+      return;
+    }
+
+    if (pendingSyncCountRef.current <= 0) {
+      if (!silentWhenEmpty) {
+        toast.success("No local data is waiting to sync.");
+      }
+      return;
+    }
+
+    try {
+      setSyncing(true);
+      const result = await syncPendingCrudOperations();
+
+      if (result.failed > 0) {
+        toast.error(`${result.synced} synced, ${result.pending} still pending.`);
+        return;
+      }
+
+      toast.success(
+        autoTriggered
+          ? `Internet restored. Synced ${result.synced} local change(s).`
+          : `Synced ${result.synced} local change(s).`,
+      );
+    } catch (error) {
+      toast.error(error?.message || "Failed to sync local data.");
+    } finally {
+      setSyncing(false);
+      setPendingSyncCount(getPendingCrudCount());
+    }
+  };
+
+  useEffect(() => {
+    const handleOnline = () => {
+      performSync({ silentWhenEmpty: true, autoTriggered: true });
+    };
+
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, []);
+
+  const handleSyncClick = async () => {
+    await performSync();
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-gray-500">
@@ -220,6 +291,9 @@ export default function MainLayout({ children }) {
           title={pageTitle}
           titleIcon={pageTitleIcon}
           onTopIconClick={handleTopbarIconClick}
+          onSyncClick={handleSyncClick}
+          pendingSyncCount={pendingSyncCount}
+          syncing={syncing}
         />
 
         <main className="min-w-0 flex-1 px-3 pt-3 sm:px-4 sm:pt-4">

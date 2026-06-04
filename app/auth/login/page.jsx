@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiRequest } from "../../AdminDashboard/authservice/api";
+import {
+  apiRequest,
+  clearCrudLocalData,
+  preloadCrudDataToLocalStorage,
+} from "../../AdminDashboard/authservice/api";
 import {
   setAuthCookies,
   clearAuthCookies,
@@ -231,6 +235,7 @@ export default function LoginPage() {
 
       /* ===== CLEAR OLD AUTH ===== */
       clearPersistedAuth();
+      clearCrudLocalData();
 
       /* ===== SAVE AUTH (BACKEND IS SOURCE OF TRUTH) ===== */
       persistAuthState({
@@ -240,6 +245,8 @@ export default function LoginPage() {
         permissions: user.permissions || [],
       });
       setAuthCookies(user.role);
+
+      await preloadCrudDataToLocalStorage(user.permissions || []);
 
       notifyAuthStateChanged();
       setShowSuccess(true);
