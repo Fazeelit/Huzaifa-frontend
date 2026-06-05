@@ -73,8 +73,40 @@ const inferDiscountPercentageLabel = (subtotal, discount) => {
 
 const getChargedSaleQuantity = (product = {}) => {
   const baseQuantity = Number(product?.chargedQuantity ?? product?.quantity ?? product?.qty ?? 0);
-  const returnedQuantity = Number(product?.returnedQuantity || 0);
+  const returnedQuantity = Math.max(
+    Number(
+      product?.returnedQuantity ??
+        product?.returnedQty ??
+        product?.returnQty ??
+        product?.quantityReturned ??
+        0
+    ) || 0,
+    0
+  );
   return Math.max(baseQuantity - returnedQuantity, 0);
+};
+
+const getReturnedSaleQuantity = (product = {}) =>
+  Math.max(
+    Number(
+      product?.returnedQuantity ??
+        product?.returnedQty ??
+        product?.returnQty ??
+        product?.quantityReturned ??
+        0
+    ) || 0,
+    0
+  );
+
+const getInvoiceAmount = (quantity, salePrice) =>
+  Number((Math.max(Number(quantity) || 0, 0) * (Number(salePrice) || 0)).toFixed(2));
+
+const derivePaymentStatus = (paidAmount, totalAmount) => {
+  const paid = Number(paidAmount) || 0;
+  const total = Number(totalAmount) || 0;
+  if (paid <= 0) return "Pending";
+  if (paid >= total) return "Paid";
+  return "Partial";
 };
 
 const toNumber = (value) => {
@@ -164,7 +196,16 @@ const SalesPage = () => {
       (sum, product) => {
         const quantity = Math.max(
           Number(product?.quantity || product?.qty || 0) -
-            Number(product?.returnedQuantity || 0),
+            Math.max(
+              Number(
+                product?.returnedQuantity ??
+                  product?.returnedQty ??
+                  product?.returnQty ??
+                  product?.quantityReturned ??
+                  0
+              ) || 0,
+              0
+            ),
           0
         );
         return sum + (Number(product?.purchasePrice || 0) * quantity);
@@ -703,9 +744,74 @@ const SalesPage = () => {
     if (!sale?._id || !Array.isArray(updates) || !updates.length) return;
     try {
       setIsSavingStatuses(true);
-      const res = await apiRequest(`/sales/updateItemStatuses/${sale._id}`, {
+      const baseProducts = Array.isArray(sale.products) ? sale.products : [];
+      const updatesByIndex = new Map(
+        updates
+          .map((entry) => [Number(entry?.index), entry])
+          .filter(([index]) => Number.isInteger(index))
+      );
+
+      let returnedValueDelta = 0;
+
+      const updatedProducts = baseProducts.map((product, index) => {
+        const update = updatesByIndex.get(index);
+        if (!update) return product;
+
+        const lineQuantity = Math.max(
+          Number(product?.quantity ?? product?.qty ?? update?.quantity ?? update?.chargedQuantity ?? 0) || 0,
+          0
+        );
+        const currentReturnedQty = getReturnedSaleQuantity(product);
+        const nextReturnedQty = Math.max(
+          0,
+          Math.min(Number(update?.returnedQuantity ?? currentReturnedQty) || 0, lineQuantity)
+        );
+        returnedValueDelta += getInvoiceAmount(
+          nextReturnedQty - currentReturnedQty,
+          product?.salePrice
+        );
+
+        return {
+          ...product,
+          status: String(update?.status || (nextReturnedQty > 0 ? "RETURNED" : "SOLD")).toUpperCase(),
+          returnedQuantity: nextReturnedQty,
+        };
+      });
+
+      const subtotal = Number(
+        Math.max((Number(sale?.subtotal) || 0) - returnedValueDelta, 0).toFixed(2)
+      );
+      const totalAmount = Number(
+        Math.max((Number(sale?.totalAmount) || 0) - returnedValueDelta, 0).toFixed(2)
+      );
+      const paidAmount = Number(
+        Math.max((Number(sale?.paidAmount) || 0) - returnedValueDelta, 0).toFixed(2)
+      );
+      const returnedAmount = Number(
+        Math.max((Number(sale?.returnedAmount) || 0) + returnedValueDelta, 0).toFixed(2)
+      );
+      const returnAmount = Number(Math.max(paidAmount - totalAmount, 0).toFixed(2));
+      const paymentStatus = derivePaymentStatus(paidAmount, totalAmount);
+
+      const requestBody = {
+        ...sale,
+        products: updatedProducts,
+        subtotal,
+        totalAmount,
+        paidAmount,
+        returnedAmount,
+        returnAmount,
+        paymentStatus,
+      };
+
+      delete requestBody._id;
+      delete requestBody.createdAt;
+      delete requestBody.updatedAt;
+      delete requestBody.__v;
+
+      const res = await apiRequest(`/sales/updateSale/${sale._id}`, {
         method: "PUT",
-        data: { updates },
+        data: requestBody,
       });
 
       if (res?.success && res?.data) {

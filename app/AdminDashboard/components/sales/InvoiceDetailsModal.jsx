@@ -9,10 +9,15 @@ const toNumber = (value) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const getChargedSaleQuantity = (item = {}) =>
+const getReturnedSaleQuantity = (item = {}) =>
   Math.max(
-    toNumber(item.chargedQuantity ?? item.quantity ?? item.qty ?? 0) -
-      toNumber(item.returnedQuantity ?? 0),
+    toNumber(
+      item.returnedQuantity ??
+        item.returnedQty ??
+        item.returnQty ??
+        item.quantityReturned ??
+        0
+    ),
     0
   );
 
@@ -32,11 +37,13 @@ export default function InvoiceDetailsModal({
   const [selectedRows, setSelectedRows] = React.useState({});
   const [isEditMode, setIsEditMode] = React.useState(false);
   const [statusDraft, setStatusDraft] = React.useState({});
+  const [returnedDraft, setReturnedDraft] = React.useState({});
 
   React.useEffect(() => {
     setSelectedRows({});
     setIsEditMode(false);
     setStatusDraft({});
+    setReturnedDraft({});
   }, [sale?._id]);
 
   if (!sale) return null;
@@ -44,12 +51,18 @@ export default function InvoiceDetailsModal({
   const items = Array.isArray(sale.products) ? sale.products : [];
   const rows = items.map((item, index) => {
     const qty = toNumber(item.chargedQuantity ?? item.quantity ?? item.qty ?? 0);
-    const returnedQty = toNumber(item.returnedQuantity ?? 0);
-    const soldQty = getChargedSaleQuantity(item);
-    const returnableQty = soldQty;
+    const baseReturnedQty = getReturnedSaleQuantity(item);
+    const draftReturnedQty = returnedDraft[index];
+    const returnedQty = Number.isFinite(draftReturnedQty)
+      ? Math.max(0, Math.min(draftReturnedQty, qty))
+      : baseReturnedQty;
+    const displaySoldQty = Math.max(qty - returnedQty, 0);
+    const returnableQty = displaySoldQty;
     const salePrice = toNumber(item.salePrice ?? item.price ?? item.purchasePrice ?? item.cost ?? 0);
-    const total = soldQty * salePrice;
-    const status = returnedQty >= qty && qty > 0 ? "RETURNED" : "SOLD";
+    const total = displaySoldQty * salePrice;
+    const derivedStatus = returnedQty >= qty && qty > 0 ? "RETURNED" : "SOLD";
+    const baseStatus = String(item.status || derivedStatus).toUpperCase();
+    const status = String(statusDraft[index] || baseStatus).toUpperCase();
     return {
       sNo: index + 1,
       index,
@@ -61,11 +74,12 @@ export default function InvoiceDetailsModal({
         item.category ||
         "-",
       qty,
-      soldQty,
+      soldQty: displaySoldQty,
       returnedQty,
       returnableQty,
       price: salePrice,
       total,
+      baseStatus,
       status,
     };
   });
@@ -97,9 +111,44 @@ export default function InvoiceDetailsModal({
   };
 
   const setRowStatus = (rowIndex, nextStatus) => {
+    const normalizedStatus = String(nextStatus || "SOLD").toUpperCase();
     setStatusDraft((prev) => ({
       ...prev,
-      [rowIndex]: nextStatus,
+      [rowIndex]: normalizedStatus,
+    }));
+
+    const row = rows.find((entry) => entry.index === rowIndex);
+    if (!row) return;
+
+    setReturnedDraft((prev) => ({
+      ...prev,
+      [rowIndex]: normalizedStatus === "RETURNED" ? row.qty : 0,
+    }));
+  };
+
+  const setRowReturnedQty = (rowIndex, qty, nextValue) => {
+    const normalized = String(nextValue ?? "").replace(/[^\d]/g, "");
+    if (normalized === "") {
+      setReturnedDraft((prev) => ({
+        ...prev,
+        [rowIndex]: "",
+      }));
+      setStatusDraft((prev) => ({
+        ...prev,
+        [rowIndex]: "SOLD",
+      }));
+      return;
+    }
+
+    const nextReturnedQty = Math.max(0, Math.min(Number(normalized), qty));
+    setReturnedDraft((prev) => ({
+      ...prev,
+      [rowIndex]: nextReturnedQty,
+    }));
+
+    setStatusDraft((prev) => ({
+      ...prev,
+      [rowIndex]: nextReturnedQty > 0 ? "RETURNED" : "SOLD",
     }));
   };
 
@@ -108,9 +157,49 @@ export default function InvoiceDetailsModal({
 
     const updates = rows
       .map((row) => {
-        const nextStatus = String(statusDraft[row.index] || row.status).toUpperCase();
-        if (nextStatus === row.status) return null;
-        return { index: row.index, status: nextStatus };
+        const normalizedOriginalReturnedQty = getReturnedSaleQuantity(items[row.index]);
+        const draftReturnedQty = returnedDraft[row.index];
+        const nextReturnedQty =
+          draftReturnedQty === ""
+            ? 0
+            : Number.isFinite(draftReturnedQty)
+              ? Math.max(0, Math.min(draftReturnedQty, row.qty))
+              : normalizedOriginalReturnedQty;
+        const nextStatus = String(
+          statusDraft[row.index] ||
+            (nextReturnedQty > 0 ? "RETURNED" : row.baseStatus)
+        ).toUpperCase();
+        const originalStatus = String(
+          items[row.index]?.status ||
+            (normalizedOriginalReturnedQty >= row.qty && row.qty > 0 ? "RETURNED" : "SOLD")
+        ).toUpperCase();
+
+        if (
+          nextStatus === originalStatus &&
+          nextReturnedQty === normalizedOriginalReturnedQty
+        ) {
+          return null;
+        }
+
+        return {
+          index: row.index,
+          itemIndex: row.index,
+          lineIndex: row.index,
+          productId: items[row.index]?.productId || items[row.index]?._id || null,
+          itemId: items[row.index]?.productId || items[row.index]?._id || null,
+          quantity: row.qty,
+          chargedQuantity: toNumber(
+            items[row.index]?.chargedQuantity ??
+              items[row.index]?.quantity ??
+              items[row.index]?.qty ??
+              0
+          ),
+          status: nextStatus,
+          returnedQuantity: nextReturnedQty,
+          returnedQty: nextReturnedQty,
+          returnQty: nextReturnedQty,
+          quantityReturned: nextReturnedQty,
+        };
       })
       .filter(Boolean);
 
@@ -122,6 +211,7 @@ export default function InvoiceDetailsModal({
     await onUpdateStatuses(sale, updates);
     setIsEditMode(false);
     setStatusDraft({});
+    setReturnedDraft({});
   };
 
   const handleDelete = async () => {
@@ -182,7 +272,24 @@ export default function InvoiceDetailsModal({
                       <td className="px-2 py-2 break-words">{row.manufacturer}</td>
                       <td className="px-2 py-2 text-right">{row.soldQty}</td>
                       <td className="px-2 py-2 text-right">
-                        {row.returnedQty > 0 ? row.returnedQty : "-"}
+                        {isEditMode ? (
+                          <input
+                            type="number"
+                            min="0"
+                            max={row.qty}
+                            value={
+                              returnedDraft[row.index] ??
+                              (row.returnedQty > 0 ? row.returnedQty : "")
+                            }
+                            placeholder="0"
+                            onChange={(e) =>
+                              setRowReturnedQty(row.index, row.qty, e.target.value)
+                            }
+                            className="h-8 w-20 rounded-md border border-slate-300 bg-white px-2 text-right text-xs font-semibold text-slate-700 placeholder:text-slate-400"
+                          />
+                        ) : (
+                          row.returnedQty
+                        )}
                       </td>
                       <td className="px-2 py-2">
                         {isEditMode ? (
@@ -247,7 +354,16 @@ export default function InvoiceDetailsModal({
           <div className="mt-5 flex flex-col justify-end gap-3 border-t border-slate-200 pt-4 sm:flex-row">
             <button
               type="button"
-              onClick={() => setIsEditMode((prev) => !prev)}
+              onClick={() => {
+                setIsEditMode((prev) => {
+                  const next = !prev;
+                  if (!next) {
+                    setStatusDraft({});
+                    setReturnedDraft({});
+                  }
+                  return next;
+                });
+              }}
               disabled={isSavingStatuses || isDeleting || !canEdit}
               className={`inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto ${blockedButtonClass} blocked-action`}
               {...blockedButtonProps(canEdit)}

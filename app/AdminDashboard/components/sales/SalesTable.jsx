@@ -5,15 +5,27 @@ import SalesRow from "./SalesRow";
 import { apiRequest } from "./../../authservice/api";
 import { formatDateDDMMYYYY } from "../../utils/formatting";
 
+const getReturnedSaleQuantity = (product = {}) =>
+  Math.max(
+    Number(
+      product?.returnedQuantity ??
+        product?.returnedQty ??
+        product?.returnQty ??
+        product?.quantityReturned ??
+        0
+    ) || 0,
+    0
+  );
+
 const getChargedSaleQuantity = (product = {}) =>
   Math.max(
     Number(product?.chargedQuantity ?? product?.quantity ?? product?.qty ?? 0) -
-      Number(product?.returnedQuantity || 0),
+      getReturnedSaleQuantity(product),
     0
   );
 
 const getDeductedSaleQuantity = (product = {}) =>
-  Math.max(Number(product?.quantity ?? product?.qty ?? 0) - Number(product?.returnedQuantity || 0), 0);
+  Math.max(Number(product?.quantity ?? product?.qty ?? 0) - getReturnedSaleQuantity(product), 0);
 
 const SalesTable = ({
   sales,
