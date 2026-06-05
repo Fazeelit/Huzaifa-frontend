@@ -1077,7 +1077,7 @@ export async function apiRequest(endpoint, options = {}) {
     return {
       success: true,
       pendingSync: true,
-      message: "Saved locally. Sync pending.",
+      message: "Saved locally. Use Sync Data to upload changes.",
       data: action === "delete" ? { id: queuedOperation.targetId } : configEntity,
       [config.entityKey]: action === "delete" ? undefined : configEntity,
     };
