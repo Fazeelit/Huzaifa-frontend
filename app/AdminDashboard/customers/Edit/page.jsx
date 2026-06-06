@@ -40,7 +40,8 @@ export default function EditCustomerPage() {
   }, []);
 
   const validateCNIC = (cnic) => /^[0-9]{5}-[0-9]{7}-[0-9]{1}$/.test(cnic);
-  const validatePhone = (phone) => /^03\d{2}-\d{7}$/.test(phone);
+  const validatePhone = (phone) =>
+    /^(\+92|0)[0-9]{10}$/.test(phone.replace(/[\s-]/g, ""));
   const validateEmail = (email) =>
     email === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -52,9 +53,10 @@ export default function EditCustomerPage() {
   };
 
   const formatPhone = (value) => {
-    const numbers = value.replace(/\D/g, "").slice(0, 11);
-    if (numbers.length <= 4) return numbers;
-    return `${numbers.slice(0, 4)}-${numbers.slice(4)}`;
+    const numbers = value.replace(/\D/g, "");
+    if (numbers.startsWith("0")) return `0${numbers.slice(1, 4)}-${numbers.slice(4, 11)}`;
+    if (numbers.startsWith("92")) return `+${numbers.slice(0, 2)} ${numbers.slice(2, 5)}-${numbers.slice(5, 12)}`;
+    return numbers;
   };
 
   const validateForm = () => {
@@ -63,7 +65,7 @@ export default function EditCustomerPage() {
     if (!customer.cnic.trim()) newErrors.cnic = "CNIC is required";
     else if (!validateCNIC(customer.cnic)) newErrors.cnic = "Invalid CNIC format (xxxxx-xxxxxxx-x)";
     if (!customer.mobile.trim()) newErrors.mobile = "Mobile number is required";
-    else if (!validatePhone(customer.mobile)) newErrors.mobile = "Phone must be in format 0300-1234567";
+    else if (!validatePhone(customer.mobile)) newErrors.mobile = "Invalid phone format";
     if (customer.email && !validateEmail(customer.email)) newErrors.email = "Invalid email format";
     if (!customer.address.trim()) newErrors.address = "Address is required";
 
@@ -178,8 +180,8 @@ export default function EditCustomerPage() {
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dbeafe,transparent_35%),radial-gradient(circle_at_85%_20%,#dcfce7,transparent_30%),linear-gradient(to_bottom,#f8fafc,#eef2ff)] dark:bg-[radial-gradient(circle_at_top_left,#0f172a,transparent_35%),radial-gradient(circle_at_85%_20%,#0b1324,transparent_30%),linear-gradient(to_bottom,#0b1220,#0f172a)] pt-12 pb-6 px-3 sm:px-4 lg:px-6">
       <div className="max-w-4xl mx-auto">
         <div className="bg-white/80 dark:bg-gray-900/70 rounded-lg shadow-xl shadow-black/5 border border-white/70 dark:border-gray-700/60 overflow-hidden backdrop-blur">
-          <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-blue-600 via-cyan-600 to-emerald-600 p-4 sm:p-6">
-            <h1 className="min-w-0 text-lg font-bold text-white sm:text-2xl">Edit Customer</h1>
+          <div className="bg-gradient-to-r from-blue-600 via-cyan-600 to-emerald-600 p-4 sm:p-6 flex items-center justify-between">
+            <h1 className="text-xl sm:text-2xl font-bold text-white">Edit Customer</h1>
             <button onClick={handleCancel} className="text-white hover:text-gray-200 transition">
               <X size={22} />
             </button>
@@ -187,8 +189,8 @@ export default function EditCustomerPage() {
 
           <div className="p-4 sm:p-6 lg:p-8">
             <form onSubmit={handleSubmit} className="space-y-4">
-              <h2 className="flex items-center gap-2 text-base font-bold text-gray-900 dark:text-white">
-                <User className="h-5 w-5 shrink-0 text-emerald-500" />
+              <h2 className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <User className="w-5 h-5 text-emerald-500" />
                 Personal Information
               </h2>
 
@@ -224,15 +226,11 @@ export default function EditCustomerPage() {
                 {errors.cnic ? <p className="text-xs text-red-600">{errors.cnic}</p> : null}
 
                 <input
-                  type="tel"
+                  type="text"
                   name="mobile"
                   value={customer.mobile}
                   onChange={(e) => setCustomer((prev) => ({ ...prev, mobile: formatPhone(e.target.value) }))}
-                  placeholder="0300-1234567"
-                  inputMode="numeric"
-                  maxLength={12}
-                  pattern="^03\\d{2}-\\d{7}$"
-                  title="Use format 0300-1234567 (11 digits)."
+                  placeholder="Mobile Number"
                   className={`w-full px-4 py-3 rounded-lg border focus:ring-4 focus:ring-emerald-500/30 focus:border-emerald-500 transition ${errors.mobile ? "border-red-500" : "border-gray-300 dark:border-gray-600"} bg-white/80 dark:bg-gray-800/80 text-gray-900 dark:text-white`}
                 />
                 {errors.mobile ? <p className="text-xs text-red-600">{errors.mobile}</p> : null}
@@ -291,18 +289,18 @@ export default function EditCustomerPage() {
                 {errors.address ? <p className="text-xs text-red-600">{errors.address}</p> : null}
               </div>
 
-              <div className="flex flex-col gap-4 sm:flex-row sm:justify-end">
+              <div className="flex flex-col sm:flex-row gap-4 sm:justify-end">
                 <button
                   type="button"
                   onClick={handleCancel}
-                  className="w-full rounded-lg bg-red-600 px-6 py-3 text-white transition shadow-sm hover:bg-red-700 sm:w-auto"
+                  className="px-6 py-3 bg-red-600 rounded-lg text-white hover:bg-red-700 transition shadow-sm"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || !canEditCustomer}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-7 py-3 font-bold text-white transition shadow-lg shadow-emerald-500/20 hover:bg-emerald-700 disabled:opacity-70 sm:w-auto"
+                  className="px-7 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-70 text-white font-bold rounded-lg transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
                 >
                   <Save className="w-5 h-5" />
                   {isSubmitting ? "Updating..." : "Update Customer"}
@@ -373,7 +371,7 @@ export default function EditCustomerPage() {
                 </p>
               </div>
             </div>
-            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setShowCancelModal(false)}

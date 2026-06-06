@@ -369,9 +369,9 @@ export default function CustomerDetailPage() {
       date: sale?.saleDate || sale?.createdAt || "",
       reference: sale?.invoiceNo || sale?._id || "-",
       name: item?.name || "Item",
-      quantity: Number(item?.chargedQuantity ?? item?.quantity ?? 0),
+      quantity: Number(item?.quantity || 0),
       unitPrice: Number(item?.salePrice || 0),
-      total: Number(item?.salePrice || 0) * Number(item?.chargedQuantity ?? item?.quantity ?? 0),
+      total: Number(item?.salePrice || 0) * Number(item?.quantity || 0),
     }))
   );
 

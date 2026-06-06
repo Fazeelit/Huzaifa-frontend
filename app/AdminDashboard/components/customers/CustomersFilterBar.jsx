@@ -41,10 +41,10 @@ export default function CustomersFilterBar({
           )}
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`w-full rounded-lg border px-4 py-2 text-sm transition flex items-center justify-center gap-2 sm:w-auto ${showFilters
+            className={`px-4 py-2 rounded-lg border flex items-center gap-2 transition text-sm ${showFilters
               ? "border-blue-500 bg-blue-50/70 dark:bg-blue-900/20 text-blue-600"
               : "border-gray-200/80 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
             }`}
@@ -57,7 +57,7 @@ export default function CustomersFilterBar({
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value)}
-            className="w-full rounded-lg border border-gray-200/80 bg-white/90 px-4 py-2 text-sm font-medium text-gray-700 focus:outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:w-auto"
+            className="px-4 py-2 rounded-lg border border-gray-200/80 dark:border-gray-700 bg-white/90 dark:bg-gray-900 text-gray-700 dark:text-gray-300 text-sm font-medium focus:outline-none focus:border-blue-500"
           >
             {sortOptions.map((option) => (
               <option key={option.value} value={option.value}>
@@ -66,10 +66,10 @@ export default function CustomersFilterBar({
             ))}
           </select>
 
-          <div className="flex w-full overflow-hidden rounded-lg border border-gray-200/80 dark:border-gray-700 sm:ml-auto sm:w-auto">
+          <div className="flex ml-auto border border-gray-200/80 dark:border-gray-700 rounded-lg overflow-hidden">
             <button
               onClick={() => setViewMode("grid")}
-              className={`flex-1 px-3 py-2 text-sm transition flex items-center justify-center gap-2 sm:flex-none ${viewMode === "grid"
+              className={`px-3 py-2 transition flex items-center gap-2 text-sm ${viewMode === "grid"
                 ? "bg-blue-500 text-white"
                 : "bg-transparent text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
               }`}
@@ -79,7 +79,7 @@ export default function CustomersFilterBar({
             </button>
             <button
               onClick={() => setViewMode("list")}
-              className={`flex-1 px-3 py-2 text-sm transition flex items-center justify-center gap-2 sm:flex-none ${viewMode === "list"
+              className={`px-3 py-2 transition flex items-center gap-2 text-sm ${viewMode === "list"
                 ? "bg-blue-500 text-white"
                 : "bg-transparent text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
               }`}

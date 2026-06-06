@@ -37,7 +37,8 @@ export default function AddCustomer() {
 
   // -------- Validation Functions --------
   const validateCNIC = (cnic) => /^[0-9]{5}-[0-9]{7}-[0-9]{1}$/.test(cnic);
-  const validatePhone = (phone) => /^03\d{2}-\d{7}$/.test(phone);
+  const validatePhone = (phone) =>
+    /^(\+92|0)[0-9]{10}$/.test(phone.replace(/[\s-]/g, ""));
   const validateEmail = (email) =>
     email === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -62,9 +63,10 @@ export default function AddCustomer() {
   };
 
   const formatPhone = (value) => {
-    const numbers = value.replace(/\D/g, "").slice(0, 11);
-    if (numbers.length <= 4) return numbers;
-    return `${numbers.slice(0, 4)}-${numbers.slice(4)}`;
+    const numbers = value.replace(/\D/g, "");
+    if (numbers.startsWith("0")) return `0${numbers.slice(1, 4)}-${numbers.slice(4, 11)}`;
+    if (numbers.startsWith("92")) return `+${numbers.slice(0, 2)} ${numbers.slice(2, 5)}-${numbers.slice(5, 12)}`;
+    return numbers;
   };
 
   const validateForm = () => {
@@ -73,7 +75,7 @@ export default function AddCustomer() {
     if (!customer.cnic.trim()) newErrors.cnic = "CNIC is required";
     else if (!validateCNIC(customer.cnic)) newErrors.cnic = "Invalid CNIC format (xxxxx-xxxxxxx-x)";
     if (!customer.mobile.trim()) newErrors.mobile = "Mobile number is required";
-    else if (!validatePhone(customer.mobile)) newErrors.mobile = "Phone must be in format 0300-1234567";
+    else if (!validatePhone(customer.mobile)) newErrors.mobile = "Invalid phone format";
     if (customer.email && !validateEmail(customer.email)) newErrors.email = "Invalid email format";
     if (!customer.address.trim()) newErrors.address = "Address is required";
 
@@ -142,8 +144,8 @@ export default function AddCustomer() {
       <div className="max-w-4xl mx-auto">
         <div className="bg-white/80 dark:bg-gray-900/70 rounded-lg shadow-xl shadow-black/5 border border-white/70 dark:border-gray-700/60 overflow-hidden backdrop-blur">
           {/* Header */}
-          <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-blue-600 via-cyan-600 to-emerald-600 p-4 sm:p-6">
-            <h1 className="min-w-0 text-base font-bold text-white sm:text-xl">Add New Customer</h1>
+          <div className="bg-gradient-to-r from-blue-600 via-cyan-600 to-emerald-600 p-4 sm:p-6 flex items-center justify-between">
+            <h1 className="text-base sm:text-xl font-bold text-white">Add New Customer</h1>
             <button onClick={handleCancel} className="text-white hover:text-gray-200 transition">
               <X size={22} />
             </button>
@@ -155,8 +157,8 @@ export default function AddCustomer() {
               {/* Customer Info */}
               <div className="space-y-5">
                 <div>
-                  <h2 className="mb-4 flex items-center gap-3 text-base font-bold text-gray-900 dark:text-white sm:mb-5 sm:text-xl">
-                    <User className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400 sm:h-5 sm:w-5" />
+                  <h2 className="text-base sm:text-xl font-bold text-gray-900 dark:text-white mb-4 sm:mb-5 flex items-center gap-3">
+                    <User className="w-4 h-4 sm:w-5 sm:h-5 text-green-600 dark:text-green-400" />
                     Personal Information
                   </h2>
 
@@ -221,15 +223,11 @@ export default function AddCustomer() {
                         Mobile Number <span className="text-red-500">*</span>
                       </label>
                       <input
-                        type="tel"
+                        type="text"
                         name="mobile"
                         value={customer.mobile}
                         onChange={(e) => setCustomer((prev) => ({ ...prev, mobile: formatPhone(e.target.value) }))}
-                        placeholder="0300-1234567"
-                        inputMode="numeric"
-                        maxLength={12}
-                        pattern="^03\\d{2}-\\d{7}$"
-                        title="Use format 0300-1234567 (11 digits)."
+                        placeholder="03xx-xxxxxxx or +92 xxx-xxxxxxx"
                         className={`w-full px-4 py-3 rounded-lg border focus:ring-4 focus:ring-emerald-500/30 focus:border-emerald-500 transition text-xs sm:text-base ${
                           errors.mobile ? "border-red-500" : "border-gray-300 dark:border-gray-600"
                         } bg-white/80 dark:bg-gray-800/80 text-gray-900 dark:text-white`}
@@ -315,7 +313,7 @@ export default function AddCustomer() {
 
               {/* Footer */}
               <div className="border-t border-gray-200 dark:border-gray-700 pt-5 mt-8">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+                <div className="flex flex-col sm:flex-row justify-between items-center gap-6">
                   <div className="text-xs text-gray-500 dark:text-gray-400 text-center sm:text-left">
                     * Required fields must be filled
                   </div>
@@ -405,7 +403,7 @@ export default function AddCustomer() {
                 </p>
               </div>
             </div>
-            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setShowCancelModal(false)}

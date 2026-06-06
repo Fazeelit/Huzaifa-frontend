@@ -29,13 +29,13 @@ export default function CustomersHeaderSection({
         <span className="text-gray-900 dark:text-white font-medium">Customers</span>
       </nav>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className="p-2.5 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-xl shadow-md">
             <Users className="w-6 h-6 text-white" />
           </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold text-gray-900 dark:text-white sm:text-2xl">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
               Customer Management
             </h1>
             <p className="text-gray-600 dark:text-gray-400 mt-1 text-sm">
@@ -44,14 +44,14 @@ export default function CustomersHeaderSection({
           </div>
         </div>
 
-        <div className="flex flex-col gap-2.5 sm:flex-row">
+        <div className="flex flex-col sm:flex-row gap-2.5">
           <Link
             href={canCreateCustomer ? "/AdminDashboard/customers/add" : "#"}
             aria-disabled={!canCreateCustomer}
             onClick={(event) => {
               if (!canCreateCustomer) event.preventDefault();
             }}
-            className={`inline-flex w-full flex-row flex-nowrap items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-semibold transition-all sm:w-auto ${
+            className={`inline-flex flex-row flex-nowrap items-center justify-center gap-2 whitespace-nowrap font-semibold px-3.5 py-2 rounded-lg text-sm transition-all ${
               canCreateCustomer
                 ? "bg-blue-600 hover:bg-blue-700 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 : "bg-gray-200 text-gray-500 cursor-not-allowed"
@@ -63,7 +63,7 @@ export default function CustomersHeaderSection({
 
           <button
             onClick={onExport}
-            className="flex w-full flex-row flex-nowrap items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 px-3.5 py-2 text-sm text-white shadow-md transition-all duration-300 hover:from-violet-600 hover:to-fuchsia-600 hover:shadow-lg hover:-translate-y-0.5 sm:w-auto"
+            className="bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white px-3.5 py-2 rounded-lg shadow-md transition-all duration-300 flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap hover:shadow-lg transform hover:-translate-y-0.5 text-sm"
           >
             <Download className="w-4 h-4" />
             <span>Export List</span>
@@ -76,7 +76,7 @@ export default function CustomersHeaderSection({
         <button
           type="button"
           onClick={() => setShowValues((prev) => !prev)}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white/90 px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-800/90 dark:text-gray-200 dark:hover:bg-gray-800 sm:w-auto"
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 dark:border-gray-700 dark:bg-gray-800/90 dark:text-gray-200 dark:hover:bg-gray-800"
         >
           {showValues ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           {showValues ? "Hide Values" : "Show Values"}

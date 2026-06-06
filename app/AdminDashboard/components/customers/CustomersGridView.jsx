@@ -34,7 +34,7 @@ export default function CustomersGridView({
               </div>
             </div>
 
-            <h3 className="mb-1 break-words text-base font-semibold text-gray-900 dark:text-white">
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">
               {customer.name}
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2.5">
@@ -64,7 +64,7 @@ export default function CustomersGridView({
             <div className="grid grid-cols-2 gap-2.5 mb-3">
               <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2.5">
                 <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Total Spent</p>
-                <p className="break-words text-sm font-bold text-gray-900 dark:text-white">
+                <p className="text-sm font-bold text-gray-900 dark:text-white">
                   PKR {(Number(customer.totalSpent) || 0).toLocaleString()}
                 </p>
               </div>
