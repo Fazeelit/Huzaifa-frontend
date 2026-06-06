@@ -37,8 +37,7 @@ export default function AddCustomer() {
 
   // -------- Validation Functions --------
   const validateCNIC = (cnic) => /^[0-9]{5}-[0-9]{7}-[0-9]{1}$/.test(cnic);
-  const validatePhone = (phone) =>
-    /^(\+92|0)[0-9]{10}$/.test(phone.replace(/[\s-]/g, ""));
+  const validatePhone = (phone) => /^03[0-9]{2}-[0-9]{7}$/.test(phone.trim());
   const validateEmail = (email) =>
     email === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -63,10 +62,10 @@ export default function AddCustomer() {
   };
 
   const formatPhone = (value) => {
-    const numbers = value.replace(/\D/g, "");
-    if (numbers.startsWith("0")) return `0${numbers.slice(1, 4)}-${numbers.slice(4, 11)}`;
-    if (numbers.startsWith("92")) return `+${numbers.slice(0, 2)} ${numbers.slice(2, 5)}-${numbers.slice(5, 12)}`;
-    return numbers;
+    const numbers = value.replace(/\D/g, "").slice(0, 11);
+    if (!numbers) return "";
+    if (numbers.length <= 4) return numbers;
+    return `${numbers.slice(0, 4)}-${numbers.slice(4)}`;
   };
 
   const validateForm = () => {
@@ -75,7 +74,7 @@ export default function AddCustomer() {
     if (!customer.cnic.trim()) newErrors.cnic = "CNIC is required";
     else if (!validateCNIC(customer.cnic)) newErrors.cnic = "Invalid CNIC format (xxxxx-xxxxxxx-x)";
     if (!customer.mobile.trim()) newErrors.mobile = "Mobile number is required";
-    else if (!validatePhone(customer.mobile)) newErrors.mobile = "Invalid phone format";
+    else if (!validatePhone(customer.mobile)) newErrors.mobile = "Phone must be in format 0345-8019548";
     if (customer.email && !validateEmail(customer.email)) newErrors.email = "Invalid email format";
     if (!customer.address.trim()) newErrors.address = "Address is required";
 
@@ -227,7 +226,8 @@ export default function AddCustomer() {
                         name="mobile"
                         value={customer.mobile}
                         onChange={(e) => setCustomer((prev) => ({ ...prev, mobile: formatPhone(e.target.value) }))}
-                        placeholder="03xx-xxxxxxx or +92 xxx-xxxxxxx"
+                        placeholder="0300-1234567"
+                        maxLength={12}
                         className={`w-full px-4 py-3 rounded-lg border focus:ring-4 focus:ring-emerald-500/30 focus:border-emerald-500 transition text-xs sm:text-base ${
                           errors.mobile ? "border-red-500" : "border-gray-300 dark:border-gray-600"
                         } bg-white/80 dark:bg-gray-800/80 text-gray-900 dark:text-white`}
@@ -425,6 +425,5 @@ export default function AddCustomer() {
     </div>
   );
 }
-
 
 
