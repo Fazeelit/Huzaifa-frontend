@@ -69,11 +69,11 @@ export default function Topbar({
         <div className="hidden shrink-0 sm:flex items-center">
           <span
             className={`mr-2 h-2.5 w-2.5 rounded-full ${
-              pendingSyncCount > 0 ? "bg-red-500" : "bg-emerald-500"
+              pendingSyncCount > 0 ? "bg-red-500" : "bg-blue-500"
             }`}
           />
           <span className="text-xs font-medium text-slate-500">
-            {pendingSyncCount > 0 ? `${pendingSyncCount} Pending` : "Live"}
+            {pendingSyncCount > 0 ? `${pendingSyncCount} Pending` : "Synced"}
           </span>
         </div>
       </div>

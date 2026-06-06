@@ -23,7 +23,9 @@ import { hasAnyPermission, hasModuleAccess } from "../authservice/permissions";
 import { getFirstAllowedRoute } from "../authservice/navigation";
 import { onAuthStateChanged, readPersistedAuthValue } from "../authservice/authStorage";
 import {
+  hasPreloadedCrudData,
   getPendingCrudCount,
+  preloadCrudDataToLocalStorage,
   subscribeToCrudSync,
   syncPendingCrudOperations,
 } from "../authservice/api";
@@ -136,6 +138,20 @@ export default function MainLayout({ children }) {
       setPendingSyncCount(pendingCount);
     });
   }, []);
+
+  useEffect(() => {
+    if (loading || !role || typeof window === "undefined") {
+      return;
+    }
+
+    if (!window.navigator.onLine || hasPreloadedCrudData(permissions)) {
+      return;
+    }
+
+    preloadCrudDataToLocalStorage(permissions).catch(() => {
+      // Keep the current screen usable even if background preload fails.
+    });
+  }, [loading, permissions, role]);
 
   useEffect(() => {
     pendingSyncCountRef.current = pendingSyncCount;

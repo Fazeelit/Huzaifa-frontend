@@ -1,7 +1,7 @@
 "use client";
 
 import { toast } from "react-hot-toast";
-import { hasModuleAccess } from "./permissions";
+import { hasModuleAccess, hasPermission } from "./permissions";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "https://backendaihub.onrender.com/api";
@@ -77,6 +77,30 @@ const CRUD_RESOURCE_CONFIGS = [
     entityKey: "user",
     detailMatchers: [/^\/user-management\/([^/]+)$/],
   },
+  {
+    name: "tests",
+    match: (endpoint) => endpoint.startsWith("/tests"),
+    listEndpoint: "/tests",
+    collectionKey: "data",
+    entityKey: "test",
+    detailMatchers: [/^\/tests\/([^/]+)$/],
+  },
+  {
+    name: "testParameters",
+    match: (endpoint) => endpoint.startsWith("/testParameters"),
+    listEndpoint: "/testParameters",
+    collectionKey: "data",
+    entityKey: "testParameter",
+    detailMatchers: [/^\/testParameters\/([^/]+)$/],
+  },
+  {
+    name: "labCategories",
+    match: (endpoint) => endpoint.startsWith("/lab-categories"),
+    listEndpoint: "/lab-categories",
+    collectionKey: "data",
+    entityKey: "labCategory",
+    detailMatchers: [/^\/lab-categories\/([^/]+)$/],
+  },
 ];
 
 const PRELOAD_RESOURCE_RULES = [
@@ -88,7 +112,22 @@ const PRELOAD_RESOURCE_RULES = [
   { endpoint: "/sales", canLoad: (permissions) => hasModuleAccess("SALE", permissions) },
   { endpoint: "/roles", canLoad: (permissions) => hasModuleAccess("ROLE", permissions) },
   { endpoint: "/user-management", canLoad: (permissions) => hasModuleAccess("USER", permissions) },
+  { endpoint: "/tests", canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
+  { endpoint: "/testParameters", canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
+  { endpoint: "/lab-categories", canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
 ];
+
+function getPreloadEndpoints(permissions = []) {
+  const safePermissions = Array.isArray(permissions) ? permissions : [];
+
+  return PRELOAD_RESOURCE_RULES.filter(({ canLoad }) => {
+    if (safePermissions.includes("*")) {
+      return true;
+    }
+
+    return canLoad(safePermissions);
+  }).map(({ endpoint }) => endpoint);
+}
 
 function normalizeAuthTokenValue(value) {
   if (value == null) {
@@ -992,6 +1031,14 @@ export async function apiRequest(endpoint, options = {}) {
       }
 
       if (config) {
+        if (endpoint !== config.listEndpoint) {
+          const cachedListResponse = cachedResponses[config.listEndpoint];
+
+          if (cachedListResponse && !extractDetailId(config, endpoint)) {
+            return applyPendingOperationsToResponse(config.listEndpoint, cachedListResponse);
+          }
+        }
+
         const detailId = extractDetailId(config, endpoint);
         const cachedEntity = findCachedEntityFromStore(cachedResponses, config, detailId);
 
@@ -1152,6 +1199,21 @@ export function getPendingCrudCount() {
   return getPendingCrudQueue().length;
 }
 
+export function getCachedCrudEndpointCount() {
+  return Object.keys(getCachedResponses()).length;
+}
+
+export function hasPreloadedCrudData(permissions = []) {
+  const cachedResponses = getCachedResponses();
+  const requiredEndpoints = getPreloadEndpoints(permissions);
+
+  if (!requiredEndpoints.length) {
+    return true;
+  }
+
+  return requiredEndpoints.every((endpoint) => cachedResponses[endpoint]);
+}
+
 export function clearCrudLocalData() {
   removeStorageKey(CRUD_CACHE_KEY);
   removeStorageKey(CRUD_QUEUE_KEY);
@@ -1218,19 +1280,11 @@ export async function preloadCrudDataToLocalStorage(
   permissions = [],
   { clearExisting = false } = {},
 ) {
-  const safePermissions = Array.isArray(permissions) ? permissions : [];
-
   if (clearExisting) {
     clearCrudLocalData();
   }
 
-  const endpointsToLoad = PRELOAD_RESOURCE_RULES.filter(({ canLoad }) => {
-    if (safePermissions.includes("*")) {
-      return true;
-    }
-
-    return canLoad(safePermissions);
-  }).map(({ endpoint }) => endpoint);
+  const endpointsToLoad = getPreloadEndpoints(permissions);
 
   const cachedResponses = getCachedResponses();
   const results = await Promise.allSettled(
