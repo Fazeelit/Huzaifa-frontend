@@ -939,7 +939,7 @@ export default function SuppliersPage() {
     
     let content = `
     ===============================
-         LAPTOP SHOP - SUPPLIER
+         Autos SHOP - SUPPLIER
     ===============================
     Date: ${now}
     
@@ -1057,7 +1057,7 @@ export default function SuppliersPage() {
 
     let content = {
       header: {
-        title: "LAPTOP SHOP - SUPPLIER MANAGEMENT",
+        title: "Autos SHOP - SUPPLIER MANAGEMENT",
         subtitle: "Supplier Bill Management System",
         date: now,
         logo: "💻"
@@ -1219,10 +1219,10 @@ export default function SuppliersPage() {
               </div>
               <div>
                 <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                  Laptop Suppliers
+                  Autos Suppliers
                 </h1>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
-                  Manage laptop suppliers, bills, and payments
+                  Manage Autos suppliers, bills, and payments
                 </p>
               </div>
             </div>
@@ -1328,7 +1328,7 @@ export default function SuppliersPage() {
             <Search className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
             <input
               type="text"
-              placeholder="Search suppliers by name, contact, email, phone, or laptop models..."
+              placeholder="Search suppliers by name, contact, email, phone, or Autos models..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-3 py-2 border border-gray-200/80 dark:border-gray-600 rounded-lg bg-white/90 dark:bg-gray-800/80 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition text-sm"
@@ -1526,12 +1526,12 @@ export default function SuppliersPage() {
             <Truck className="w-10 h-10 text-blue-600 dark:text-blue-400" />
           </div>
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-            No laptop suppliers found
+            No Autos suppliers found
           </h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-5 max-w-md mx-auto">
             {searchTerm || selectedStatus !== "All Status"
               ? "Try adjusting your search or filters to find suppliers"
-              : "Add your first laptop supplier to start managing your vendor relationships"}
+              : "Add your first Autos supplier to start managing your vendor relationships"}
           </p>
           <button
             onClick={() => setShowAddModal(true)}
