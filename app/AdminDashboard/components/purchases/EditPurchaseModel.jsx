@@ -45,6 +45,46 @@ const toIsoFromDisplay = (value) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+const normalizeProductStatus = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "claim") return "Claim";
+  if (normalized === "returned") return "Returned";
+  return "";
+};
+
+const getStatusQuantityValue = (value) => {
+  const quantity = Number(value || 0);
+  return Number.isFinite(quantity) ? Math.max(quantity, 0) : 0;
+};
+
+const createPurchaseItem = (product = {}) => {
+  const status = normalizeProductStatus(product.status);
+  const statusQuantity =
+    product.statusQuantity ??
+    product.returnedQuantity ??
+    product.quantityReturned ??
+    product.claimQuantity ??
+    "";
+  const numericQuantity = Number(product.quantity || 0);
+  const baseQuantity =
+    status === "Returned"
+      ? numericQuantity + getStatusQuantityValue(statusQuantity)
+      : numericQuantity;
+
+  return {
+    id: Date.now() + Math.random(),
+    productId: product.productId || "",
+    name: product.name || "",
+    quantity: numericQuantity,
+    baseQuantity,
+    purchasePrice: product.purchasePrice || product.price || 0,
+    manufacturer: product.manufacturer || "",
+    status,
+    statusQuantity,
+    searchText: product.name || "",
+  };
+};
+
 const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
   const [supplier, setSupplier] = useState(purchase?.supplier || "");
   const [suppliersList, setSuppliersList] = useState([]);
@@ -52,17 +92,7 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
   const [invoiceNumber, setInvoiceNumber] = useState(
     purchase?.invoiceNumber != null ? String(purchase.invoiceNumber) : ""
   );
-  const [items, setItems] = useState(() =>
-    (purchase?.products || []).map((p) => ({
-      id: Date.now() + Math.random(),
-      productId: p.productId || "",
-      name: p.name || "",
-      quantity: p.quantity || 0,
-      purchasePrice: p.purchasePrice || p.price || 0,
-      manufacturer: p.manufacturer || "",
-      searchText: p.name || "",
-    }))
-  );
+  const [items, setItems] = useState(() => (purchase?.products || []).map((p) => createPurchaseItem(p)));
   const [taxAmount, setTaxAmount] = useState(Number(purchase?.taxAmount || 0));
   const [productsList, setProductsList] = useState([]);
   const [errors, setErrors] = useState({});
@@ -74,17 +104,7 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
     setSupplier(purchase?.supplier || "");
     setPurchaseDate(formatDateToDisplay(purchase?.purchaseDate));
     setInvoiceNumber(purchase?.invoiceNumber != null ? String(purchase.invoiceNumber) : "");
-    setItems(
-      (purchase?.products || []).map((p) => ({
-        id: Date.now() + Math.random(),
-        productId: p.productId || "",
-        name: p.name || "",
-        quantity: p.quantity || 0,
-        purchasePrice: p.purchasePrice || p.price || 0,
-        manufacturer: p.manufacturer || "",
-        searchText: p.name || "",
-      }))
-    );
+    setItems((purchase?.products || []).map((p) => createPurchaseItem(p)));
     setTaxAmount(Number(purchase?.taxAmount || 0));
     setErrors({});
   }, [purchase]);
@@ -152,8 +172,11 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
         productId: "",
         name: "",
         quantity: 1,
+        baseQuantity: 1,
         purchasePrice: 0,
         manufacturer: "",
+        status: "",
+        statusQuantity: "",
         searchText: "",
       },
     ]);
@@ -166,10 +189,47 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
       prev.map((it) =>
         it.id !== id
           ? it
-          : {
-              ...it,
-              [field]: ["quantity", "purchasePrice"].includes(field) ? Number(value || 0) : value,
-            }
+          : (() => {
+              const numericValue = Number(value || 0);
+              const nextItem = { ...it };
+
+              if (field === "quantity") {
+                const nextQuantity = Math.max(numericValue, 0);
+                const statusQuantity = getStatusQuantityValue(it.statusQuantity);
+
+                nextItem.baseQuantity =
+                  normalizeProductStatus(it.status) === "Returned"
+                    ? nextQuantity + statusQuantity
+                    : nextQuantity;
+                nextItem.quantity = nextQuantity;
+                return nextItem;
+              }
+
+              if (field === "statusQuantity") {
+                nextItem.statusQuantity = value;
+                nextItem.quantity =
+                  normalizeProductStatus(it.status) === "Returned"
+                    ? Math.max(Number(it.baseQuantity || 0) - getStatusQuantityValue(value), 0)
+                    : Number(it.baseQuantity || it.quantity || 0);
+                return nextItem;
+              }
+
+              if (field === "status") {
+                const nextStatus = normalizeProductStatus(value);
+                nextItem.status = nextStatus;
+                nextItem.quantity =
+                  nextStatus === "Returned"
+                    ? Math.max(
+                        Number(it.baseQuantity || it.quantity || 0) - getStatusQuantityValue(it.statusQuantity),
+                        0
+                      )
+                    : Number(it.baseQuantity || it.quantity || 0);
+                return nextItem;
+              }
+
+              nextItem[field] = field === "purchasePrice" ? numericValue : value;
+              return nextItem;
+            })()
       )
     );
     setErrors((prev) => ({ ...prev, [`${id}-${field}`]: "" }));
@@ -195,7 +255,18 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
     handleItemChange(itemId, "manufacturer", "");
   };
 
-  const rowTotal = (it) => Number(it.quantity || 0) * Number(it.purchasePrice || 0);
+  const getEffectiveQuantity = (it) => {
+    const baseQuantity = Number(it.baseQuantity ?? it.quantity ?? 0);
+    const statusQuantity = getStatusQuantityValue(it.statusQuantity);
+
+    if (normalizeProductStatus(it.status) !== "Returned") {
+      return baseQuantity;
+    }
+
+    return Math.max(baseQuantity - statusQuantity, 0);
+  };
+
+  const rowTotal = (it) => getEffectiveQuantity(it) * Number(it.purchasePrice || 0);
   const subtotal = useMemo(() => items.reduce((acc, it) => acc + rowTotal(it), 0), [items]);
   const totalAmount = subtotal + Number(taxAmount || 0);
 
@@ -210,10 +281,19 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
     if (items.length === 0) temp.items = "Value is required";
 
     items.forEach((it) => {
+      const normalizedStatus = normalizeProductStatus(it.status);
+      const statusQuantity = getStatusQuantityValue(it.statusQuantity);
+
       if (!it.productId) temp[`${it.id}-productId`] = "Value is required";
-      if (!it.quantity || it.quantity <= 0) temp[`${it.id}-quantity`] = "Value is required";
+      if (!getEffectiveQuantity(it) || getEffectiveQuantity(it) <= 0) temp[`${it.id}-quantity`] = "Value is required";
       if (!it.purchasePrice || it.purchasePrice <= 0) temp[`${it.id}-purchasePrice`] = "Value is required";
       if (!it.manufacturer?.trim()) temp[`${it.id}-manufacturer`] = "Value is required";
+      if (normalizedStatus && statusQuantity <= 0) {
+        temp[`${it.id}-statusQuantity`] = "Status quantity must be greater than 0";
+      }
+      if (normalizedStatus === "Returned" && statusQuantity > Number(it.baseQuantity || 0)) {
+        temp[`${it.id}-statusQuantity`] = "Returned quantity cannot exceed quantity";
+      }
     });
 
 
@@ -234,13 +314,23 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
         invoiceNumber: String(invoiceNumber || "").trim(),
         totalAmount,
         taxAmount,
-        products: items.map((it) => ({
-          productId: it.productId,
-          name: it.name,
-          quantity: it.quantity,
-          purchasePrice: it.purchasePrice,
-          manufacturer: it.manufacturer,
-        })),
+        products: items.map((it) => {
+          const normalizedStatus = normalizeProductStatus(it.status);
+          const statusQuantity = getStatusQuantityValue(it.statusQuantity);
+
+          return {
+            productId: it.productId,
+            name: it.name,
+            quantity:
+              normalizedStatus === "Returned"
+                ? Math.max(Number(it.baseQuantity || 0) - statusQuantity, 0)
+                : Number(it.baseQuantity || it.quantity || 0),
+            purchasePrice: it.purchasePrice,
+            manufacturer: it.manufacturer,
+            status: normalizedStatus || undefined,
+            statusQuantity: normalizedStatus ? statusQuantity : undefined,
+          };
+        }),
       };
 
       const response = await apiRequest(`/purchases/updatePurchase/${purchase?._id}`, {
@@ -302,7 +392,7 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
       )}
 
       <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/50 p-3 backdrop-blur-sm sm:p-4">
-        <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex max-h-[90vh] w-full max-w-[935px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
           <div className="sticky top-0 flex items-center justify-between gap-3 bg-gradient-to-r from-blue-500 to-blue-600 p-4 text-white sm:p-6">
             <h2 className="min-w-0 text-xl font-bold sm:text-2xl">Edit Purchase</h2>
             <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-lg transition-colors">
@@ -365,10 +455,12 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
               </div>
 
               <div className="hidden gap-2 px-2 text-sm font-semibold text-gray-600 md:flex">
-                <div className="flex-1">Product Name</div>
+                <div className="w-40 lg:w-48 xl:w-56">Product Name</div>
                 <div className="w-20 text-center">QTY</div>
                 <div className="w-24 text-center">Purchase Price</div>
                 <div className="w-24 text-center">Manufacturer</div>
+                <div className="w-24 text-center">Status</div>
+                <div className="w-24 text-center">Status Quantity</div>
                 <div className="w-20 text-center">Total</div>
                 <div className="w-9" />
               </div>
@@ -376,7 +468,7 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
 
               {items.map((it) => (
                 <div key={it.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-2">
-                  <div className="flex-1 min-w-[220px]">
+                  <div className="w-full sm:w-40 lg:w-48 xl:w-56">
                     <input
                       list={`products-${it.id}`}
                       value={it.searchText ?? it.name ?? ""}
@@ -399,7 +491,7 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
                     <input
                       type="number"
                       placeholder="0"
-                      value={it.quantity}
+                      value={getEffectiveQuantity(it)}
                       onChange={(e) => handleItemChange(it.id, "quantity", e.target.value)}
                       className="w-full h-9 rounded-md border border-gray-200 px-2 text-sm shadow-sm text-center"
                     />
@@ -431,6 +523,31 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
                     />
                     {errors[`${it.id}-manufacturer`] && (
                       <p className="text-xs text-red-600 mt-1 text-center">{errors[`${it.id}-manufacturer`]}</p>
+                    )}
+                  </div>
+
+                  <div className="w-[calc(50%-0.25rem)] sm:w-24">
+                    <select
+                      value={it.status || ""}
+                      onChange={(e) => handleItemChange(it.id, "status", e.target.value)}
+                      className="w-full h-9 rounded-md border border-gray-200 bg-white px-2 text-left text-sm shadow-sm"
+                    >
+                      <option value="">Select</option>
+                      <option value="Claim">Claim</option>
+                      <option value="Returned">Returned</option>
+                    </select>
+                  </div>
+
+                  <div className="w-[calc(50%-0.25rem)] sm:w-24">
+                    <input
+                      type="text"
+                      placeholder="0"
+                      value={it.statusQuantity}
+                      onChange={(e) => handleItemChange(it.id, "statusQuantity", e.target.value)}
+                      className="w-full h-9 rounded-md border border-gray-200 px-2 text-sm shadow-sm text-center"
+                    />
+                    {errors[`${it.id}-statusQuantity`] && (
+                      <p className="text-xs text-red-600 mt-1 text-center">{errors[`${it.id}-statusQuantity`]}</p>
                     )}
                   </div>
 

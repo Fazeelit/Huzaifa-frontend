@@ -6,6 +6,8 @@ import { FaEye, FaEyeSlash } from "react-icons/fa";
 import { X } from "lucide-react";
 import { formatPhoneInput, isValidPhone, PHONE_PATTERN } from "../../utils/formatting";
 
+const normalizeRoleValue = (value) => String(value || "").trim().toUpperCase();
+
 const EditUserModal = ({ isOpen, onClose, userData, onSuccess, availableRoles = [] }) => {
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -102,7 +104,7 @@ const EditUserModal = ({ isOpen, onClose, userData, onSuccess, availableRoles = 
       email: formData.email,
       phone: formData.phone,
       employeeId: formData.employeeId,
-      role: formData.role,
+      role: normalizeRoleValue(formData.role),
       department: formData.department,
       status: formData.status,
       ...(formData.password && { password: formData.password }),

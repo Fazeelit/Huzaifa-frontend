@@ -121,6 +121,31 @@ const getCustomerTimestamp = (customer) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const matchesCustomerSale = (sale, customer) => {
+  const saleCustomer = sale?.customer || sale?.selectedCustomer || {};
+  const saleCustomerId = sale?.customerId || saleCustomer?._id || saleCustomer?.id || "";
+  const targetId = customer?.id || customer?._id || "";
+  const saleName = String(sale?.customerName || saleCustomer?.name || "")
+    .trim()
+    .toLowerCase();
+  const targetName = String(customer?.name || "")
+    .trim()
+    .toLowerCase();
+  const saleCnic = String(saleCustomer?.cnic || "").trim();
+  const targetCnic = String(customer?.cnic || "").trim();
+  const salePhone = String(saleCustomer?.phone || saleCustomer?.mobile || "").trim();
+  const targetPhone = String(customer?.phone || customer?.mobile || "").trim();
+
+  return (
+    (targetId && saleCustomerId && String(saleCustomerId) === String(targetId)) ||
+    (targetCnic && saleCnic && saleCnic === targetCnic) ||
+    (targetPhone && salePhone && salePhone === targetPhone) ||
+    (targetName && saleName === targetName)
+  );
+};
+
+const getSaleDateValue = (sale) => sale?.saleDate || sale?.createdAt || sale?.timestamp || null;
+
 export default function Customers() {
   const [searchTerm, setSearchTerm] = useState("");
   const [customers, setCustomers] = useState([]);
@@ -208,7 +233,29 @@ export default function Customers() {
   }, []);
 
 
-  const filteredCustomers = customers
+  const enrichedCustomers = customers.map((customer) => {
+    const matchedSales = sales.filter((sale) => matchesCustomerSale(sale, customer));
+    const totalSpent = matchedSales.reduce(
+      (sum, sale) => sum + (Number(sale?.totalAmount ?? sale?.total) || 0),
+      0
+    );
+    const latestSale = matchedSales
+      .slice()
+      .sort((a, b) => new Date(getSaleDateValue(b) || 0).getTime() - new Date(getSaleDateValue(a) || 0).getTime())[0];
+
+    return {
+      ...customer,
+      purchaseCount: matchedSales.length,
+      totalSpent,
+      lastPurchase: latestSale ? (getSaleDateValue(latestSale) || customer.lastPurchase) : "No purchases yet",
+    };
+  });
+
+  const resolvedViewCustomer = viewCustomer
+    ? enrichedCustomers.find((customer) => String(customer.id) === String(viewCustomer.id)) || viewCustomer
+    : null;
+
+  const filteredCustomers = enrichedCustomers
     .filter((customer) => {
       const q = searchTerm.toLowerCase();
       const customerStatus = String(customer.status || "").toLowerCase();
@@ -261,32 +308,20 @@ export default function Customers() {
   );
 
   const stats = {
-    total: customers.length,
-    active: customers.filter((c) => c.status === "active").length,
-    totalSpent: customers.reduce((sum, c) => sum + toNumber(c.totalSpent), 0),
+    total: enrichedCustomers.length,
+    active: enrichedCustomers.filter((c) => c.status === "active").length,
+    totalSpent: enrichedCustomers.reduce((sum, c) => sum + toNumber(c.totalSpent), 0),
     avgSatisfaction:
-      customers.length > 0
+      enrichedCustomers.length > 0
         ? Math.round(
-            customers.reduce((sum, c) => sum + (c.satisfaction || 0), 0) /
-              customers.length
+            enrichedCustomers.reduce((sum, c) => sum + (c.satisfaction || 0), 0) /
+              enrichedCustomers.length
           )
         : 0,
   };
 
-  const customerSales = viewCustomer
-    ? sales.filter((sale) => {
-        const saleCustomer = sale?.customer || {};
-        const saleCustomerId = saleCustomer?._id || saleCustomer?.id || "";
-        return (
-          (viewCustomer.id && saleCustomerId && String(saleCustomerId) === String(viewCustomer.id)) ||
-          (viewCustomer.cnic &&
-            saleCustomer?.cnic &&
-            String(saleCustomer.cnic).trim() === String(viewCustomer.cnic).trim()) ||
-          (viewCustomer.phone &&
-            (saleCustomer?.phone || saleCustomer?.mobile) &&
-            String(saleCustomer.phone || saleCustomer.mobile).trim() === String(viewCustomer.phone).trim())
-        );
-      })
+  const customerSales = resolvedViewCustomer
+    ? sales.filter((sale) => matchesCustomerSale(sale, resolvedViewCustomer))
     : [];
 
   const customerPurchasedProducts = customerSales.flatMap((sale) =>
@@ -374,7 +409,7 @@ export default function Customers() {
   });
 
   const handlePrintCustomerBills = () => {
-    if (typeof window === "undefined" || customerBills.length === 0 || !viewCustomer) return;
+    if (typeof window === "undefined" || customerBills.length === 0 || !resolvedViewCustomer) return;
 
     const rows = customerBills
       .map(
@@ -397,7 +432,7 @@ export default function Customers() {
     printWindow.document.write(`
       <html>
         <head>
-          <title>Bills from ${viewCustomer.name}</title>
+          <title>Bills from ${resolvedViewCustomer.name}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
             h1 { margin: 0 0 8px; }
@@ -408,7 +443,7 @@ export default function Customers() {
           </style>
         </head>
         <body>
-          <h1>Bills from ${viewCustomer.name}</h1>
+          <h1>Bills from ${resolvedViewCustomer.name}</h1>
           <p>Total outstanding: Rs. ${totalOutstandingAmount.toLocaleString()}</p>
           <table>
             <thead>
@@ -435,7 +470,7 @@ export default function Customers() {
   const handlePrintCustomerPaymentReport = (payment = null) => {
     if (typeof window === "undefined") return;
     const payments = payment ? [payment] : customerPaymentHistory;
-    if (!payments.length || !viewCustomer) return;
+    if (!payments.length || !resolvedViewCustomer) return;
 
     const rows = payments
       .map(
@@ -469,7 +504,7 @@ export default function Customers() {
         </head>
         <body>
           <h1>Payment History Report</h1>
-          <p>${viewCustomer.name}</p>
+          <p>${resolvedViewCustomer.name}</p>
           <table>
             <thead>
               <tr>
@@ -733,7 +768,7 @@ export default function Customers() {
               searchTerm={searchTerm}
             />
 
-            {viewCustomer ? (
+            {resolvedViewCustomer ? (
               <div className="space-y-4">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                   <div className="flex items-center gap-4">
@@ -755,7 +790,7 @@ export default function Customers() {
 
                   <div className="flex items-center gap-3">
                     <Link
-                      href={canEditCustomer ? `/AdminDashboard/customers/Edit?id=${viewCustomer.id}` : "#"}
+                      href={canEditCustomer ? `/AdminDashboard/customers/Edit?id=${resolvedViewCustomer.id}` : "#"}
                       aria-disabled={!canEditCustomer}
                       onClick={(event) => {
                         if (!canEditCustomer) event.preventDefault();
@@ -775,35 +810,35 @@ export default function Customers() {
                   <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
                     <div className="flex items-start gap-5">
                       <div className="w-20 h-20 bg-gradient-to-r from-blue-600 to-emerald-500 rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg">
-                        {viewCustomer.name?.charAt(0)}
+                        {resolvedViewCustomer.name?.charAt(0)}
                       </div>
                       <div className="space-y-2">
                         <div className="flex items-center gap-3 flex-wrap">
                           <h3 className="text-2xl font-bold text-gray-900 dark:text-white">
-                            {viewCustomer.name}
+                            {resolvedViewCustomer.name}
                           </h3>
-                          {getStatusBadge(viewCustomer.status)}
+                          {getStatusBadge(resolvedViewCustomer.status)}
                         </div>
                         <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400 flex-wrap">
                           <User className="w-4 h-4" />
-                          <span>{viewCustomer.name || "-"}</span>
+                          <span>{resolvedViewCustomer.name || "-"}</span>
                           <span className="w-1 h-1 bg-gray-300 rounded-full mx-2"></span>
                           <Tag className="w-4 h-4" />
                           <span className="capitalize">
-                            {viewCustomer.customerType || "individual"}
+                            {resolvedViewCustomer.customerType || "individual"}
                           </span>
                           <span className="w-1 h-1 bg-gray-300 rounded-full mx-2"></span>
                           <MapPin className="w-4 h-4" />
-                          <span>{viewCustomer.address || "-"}</span>
+                          <span>{resolvedViewCustomer.address || "-"}</span>
                         </div>
                         <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400 mt-2">
                           <div className="flex items-center gap-1">
                             <Calendar className="w-4 h-4" />
-                            Registered: {formatDate(viewCustomer.customerSince) || "-"}
+                            Registered: {formatDate(resolvedViewCustomer.customerSince) || "-"}
                           </div>
                           <div className="flex items-center gap-1">
                             <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
-                            Rating: {Math.max(1, Math.min(5, Math.round((viewCustomer.satisfaction || 0) / 20) || 0))}/5
+                            Rating: {Math.max(1, Math.min(5, Math.round((resolvedViewCustomer.satisfaction || 0) / 20) || 0))}/5
                           </div>
                         </div>
                       </div>
@@ -813,19 +848,19 @@ export default function Customers() {
                       <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-emerald-50 dark:from-blue-900/20 dark:to-emerald-900/20 rounded-xl">
                         <p className="text-xs text-gray-600 dark:text-gray-400">Total Purchases</p>
                         <p className="text-xl font-bold text-gray-900 dark:text-white">
-                          {viewCustomer.purchaseCount || 0}
+                          {resolvedViewCustomer.purchaseCount || 0}
                         </p>
                       </div>
                       <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 rounded-xl">
                         <p className="text-xs text-gray-600 dark:text-gray-400">Total Amount</p>
                         <p className="text-xl font-bold text-gray-900 dark:text-white">
-                          PKR {(Number(viewCustomer.totalSpent) || 0).toLocaleString()}
+                          PKR {(Number(resolvedViewCustomer.totalSpent) || 0).toLocaleString()}
                         </p>
                       </div>
                       <div className="px-4 py-3 bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-xl">
                         <p className="text-xs text-gray-600 dark:text-gray-400">Credit Limit</p>
                         <p className="text-xl font-bold text-gray-900 dark:text-white">
-                          {Number(viewCustomer.creditLimit || 0).toLocaleString()}
+                          {Number(resolvedViewCustomer.creditLimit || 0).toLocaleString()}
                         </p>
                       </div>
                     </div>
@@ -838,7 +873,7 @@ export default function Customers() {
                       <div>
                         <p className="text-sm text-gray-600 dark:text-gray-400">Total Bills</p>
                         <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                          {viewCustomer.purchaseCount || 0}
+                          {resolvedViewCustomer.purchaseCount || 0}
                         </p>
                       </div>
                       <div className="p-3 bg-gradient-to-r from-blue-100 to-emerald-100 dark:from-blue-900/30 dark:to-emerald-900/30 rounded-xl">
@@ -852,7 +887,7 @@ export default function Customers() {
                       <div>
                         <p className="text-sm text-gray-600 dark:text-gray-400">Paid Amount</p>
                         <p className="text-2xl font-bold text-green-600 dark:text-green-400">
-                          PKR {(Number(viewCustomer.totalSpent) || 0).toLocaleString()}
+                          PKR {(Number(resolvedViewCustomer.totalSpent) || 0).toLocaleString()}
                         </p>
                       </div>
                       <div className="p-3 bg-gradient-to-r from-green-100 to-emerald-100 dark:from-green-900/30 dark:to-emerald-900/30 rounded-xl">
@@ -866,7 +901,7 @@ export default function Customers() {
                       <div>
                         <p className="text-sm text-gray-600 dark:text-gray-400">Pending Amount</p>
                         <p className="text-lg font-bold text-amber-600 dark:text-amber-400">
-                          PKR {(Number(viewCustomer.accountBalance) || 0).toLocaleString()}
+                          PKR {(Number(resolvedViewCustomer.accountBalance) || 0).toLocaleString()}
                         </p>
                       </div>
                       <div className="p-3 bg-gradient-to-r from-amber-100 to-yellow-100 dark:from-amber-900/30 dark:to-yellow-900/30 rounded-xl">
@@ -932,7 +967,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Company Name</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {viewCustomer.name || "-"}
+                                  {resolvedViewCustomer.name || "-"}
                                 </p>
                               </div>
                             </div>
@@ -941,7 +976,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Contact Person</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {viewCustomer.fatherName || viewCustomer.name || "-"}
+                                  {resolvedViewCustomer.fatherName || resolvedViewCustomer.name || "-"}
                                 </p>
                               </div>
                             </div>
@@ -950,7 +985,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Email</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {viewCustomer.email || "-"}
+                                  {resolvedViewCustomer.email || "-"}
                                 </p>
                               </div>
                             </div>
@@ -959,7 +994,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Phone</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {viewCustomer.phone || "-"}
+                                  {resolvedViewCustomer.phone || "-"}
                                 </p>
                               </div>
                             </div>
@@ -968,7 +1003,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Mobile</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {viewCustomer.mobile || "-"}
+                                  {resolvedViewCustomer.mobile || "-"}
                                 </p>
                               </div>
                             </div>
@@ -984,7 +1019,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Address</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {viewCustomer.address || "-"}
+                                  {resolvedViewCustomer.address || "-"}
                                 </p>
                               </div>
                             </div>
@@ -1002,7 +1037,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Tax ID</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {viewCustomer.cnic || "-"}
+                                  {resolvedViewCustomer.cnic || "-"}
                                 </p>
                               </div>
                             </div>
@@ -1011,7 +1046,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Registered Date</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {formatDate(viewCustomer.customerSince) || "-"}
+                                  {formatDate(resolvedViewCustomer.customerSince) || "-"}
                                 </p>
                               </div>
                             </div>
@@ -1020,7 +1055,7 @@ export default function Customers() {
                               <div>
                                 <p className="text-sm text-gray-500">Credit Limit</p>
                                 <p className="font-medium text-gray-900 dark:text-white">
-                                  {Number(viewCustomer.creditLimit || 0).toLocaleString()}
+                                  {Number(resolvedViewCustomer.creditLimit || 0).toLocaleString()}
                                 </p>
                               </div>
                             </div>
@@ -1157,7 +1192,7 @@ export default function Customers() {
                             No purchase record found for this customer.
                           </p>
                           <p className="text-sm text-gray-500 dark:text-gray-400">
-                            Total purchases: {viewCustomer.purchaseCount || 0}
+                            Total purchases: {resolvedViewCustomer.purchaseCount || 0}
                           </p>
                         </div>
                       )}
@@ -1169,15 +1204,15 @@ export default function Customers() {
                       <div className="flex items-center justify-between">
                         <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                           <FileText className="w-5 h-5 text-blue-600" />
-                          Bills from {viewCustomer.name}
+                          Bills from {resolvedViewCustomer.name}
                         </h3>
                         <div className="flex items-center gap-3">
                           <button
                             type="button"
                             onClick={() => {
                               setSelectedBill({
-                                id: `total-${viewCustomer.id || viewCustomer.name}`,
-                                billId: `TOTAL-${viewCustomer.name}`,
+                                id: `total-${resolvedViewCustomer.id || resolvedViewCustomer.name}`,
+                                billId: `TOTAL-${resolvedViewCustomer.name}`,
                                 amount: totalOutstandingAmount,
                                 remaining: totalOutstandingAmount,
                                 status: totalOutstandingAmount > 0 ? "pending" : "paid",

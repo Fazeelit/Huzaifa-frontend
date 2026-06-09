@@ -247,8 +247,6 @@ export default function LoginPage() {
       });
       setAuthCookies(user.role);
 
-      await preloadCrudDataToLocalStorage(user.permissions || []);
-
       notifyAuthStateChanged();
       setShowSuccess(true);
 
@@ -271,6 +269,10 @@ export default function LoginPage() {
       }
 
       router.replace(redirectTo);
+
+      preloadCrudDataToLocalStorage(user.permissions || []).catch(() => {
+        // MainLayout will keep trying in the background if preload is incomplete.
+      });
     } catch (err) {
       setMessage(err?.message || "Login failed");
       setShowErrorModal(true);

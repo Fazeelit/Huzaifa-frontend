@@ -150,16 +150,11 @@ const getSaleTotal = (sale) => {
   return (
     sale?.products?.reduce(
       (sum, product) =>
-        sum +
-        toNumber(product?.salePrice ?? product?.price) *
-          toNumber(product?.chargedQuantity ?? product?.quantity ?? product?.qty),
+        sum + toNumber(product?.salePrice ?? product?.price) * toNumber(product?.quantity ?? product?.qty),
       0
     ) || 0
   );
 };
-
-const getDeductedSaleQuantity = (product = {}) =>
-  Math.max(toNumber(product?.quantity ?? product?.qty) - toNumber(product?.returnedQuantity), 0);
 
 const getProductLookupKeys = (product = {}) => {
   const keys = [];
@@ -214,6 +209,8 @@ const Cards = () => {
 
         const currentYearStart = new Date(today.getFullYear(), 0, 1);
         const nextYearStart = new Date(today.getFullYear() + 1, 0, 1);
+        const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+        const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
 
         /* ================= FETCH DATA ================= */
         const canSaleView = can("SALE_VIEW");
@@ -301,7 +298,7 @@ const Cards = () => {
           const totalPurchaseAmount = (Array.isArray(sale?.products) ? sale.products : []).reduce(
             (sum, product) => {
               const quantity = Math.max(
-                getDeductedSaleQuantity(product),
+                Number(product?.quantity || product?.qty || 0) - Number(product?.returnedQuantity || 0),
                 0
               );
               return sum + Number(product?.purchasePrice || 0) * quantity;
@@ -316,7 +313,7 @@ const Cards = () => {
           const totalPurchaseAmount = (Array.isArray(sale?.products) ? sale.products : []).reduce(
             (sum, product) => {
               const quantity = Math.max(
-                getDeductedSaleQuantity(product),
+                Number(product?.quantity || product?.qty || 0) - Number(product?.returnedQuantity || 0),
                 0
               );
               return sum + Number(product?.purchasePrice || 0) * quantity;
@@ -360,12 +357,20 @@ const Cards = () => {
           )
         );
 
-        const monthlySalesAmount = yearToDateSales.reduce(
+        const currentMonthSales = sales.filter((sale) =>
+          isDateInRange(
+            sale.createdAt || sale.saleDate,
+            currentMonthStart,
+            nextMonthStart
+          )
+        );
+
+        const monthlySalesAmount = currentMonthSales.reduce(
           (sum, sale) => sum + Number(sale?.totalAmount || 0),
           0
         );
 
-        const monthlyProfit = yearToDateSales
+        const monthlyProfit = currentMonthSales
           .reduce((sum, sale) => sum + calculateSalesPageProfit(sale), 0);
 
         /* ================= EXPENSES ================= */
@@ -452,21 +457,21 @@ const Cards = () => {
           {
             title: "Monthly Profit",
             value: `Rs.${monthlyProfit.toFixed(2)}`,
-            subtitle: "Current month sales profit, reset on January 1",
+            subtitle: "Current monthly sales profit, reset on next month 1st",
             icon: <TrendingUp className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-purple-500 to-pink-600",
           },
           {
             title: "Total Product Purchase",
             value: `Rs.${totalProductPurchase.toFixed(2)}`,
-            subtitle: "Current month purchases, reset on January 1",
+            subtitle: "Current monthly purchases, reset on January 1",
             icon: <Package className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-cyan-500 to-blue-600",
           },          
           {
-            title: "Month Sales",
+            title: "Monthly Sales",
             value: `Rs.${monthlySalesAmount.toFixed(2)}`,
-            subtitle: "Current month sales amount, reset on January 1",
+            subtitle: "Current month sales amount, reset on next month 1st",
             icon: <Receipt className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-rose-500 to-red-600",
           },

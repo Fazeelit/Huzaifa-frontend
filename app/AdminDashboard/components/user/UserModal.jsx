@@ -5,10 +5,32 @@ import { apiRequest } from "./../../authservice/api";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 import { formatPhoneInput, isValidPhone, PHONE_PATTERN } from "../../utils/formatting";
 
+const SALES_MANAGER_ROLE_LABEL = "Sales_Manager";
+const SALES_MANAGER_ROLE_VALUE = "SALES_MANAGER";
+const SALES_MANAGER_DEFAULT_PERMISSIONS = [
+  "DASHBOARD_VIEW",
+  "POS_VIEW",
+  "POS_CREATE",
+  "POS_EDIT",
+  "POS_DELETE",
+  "CUSTOMER_VIEW",
+  "CUSTOMER_CREATE",
+  "CUSTOMER_EDIT",
+  "PRODUCT_VIEW",
+  "SALE_VIEW",
+  "SALE_CREATE",
+  "SALE_EDIT",
+  "REPORT_VIEW",
+];
+
+const normalizeRoleValue = (value) => String(value || "").trim().toUpperCase();
+
 const UserModal = ({ isOpen, onClose, userData, onSuccess, availableRoles = [] }) => {
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [initialized, setInitialized] = useState(false); // ✅ FIX
+
+  const roleOptions = Array.from(new Set([...availableRoles, SALES_MANAGER_ROLE_LABEL]));
 
   const [formData, setFormData] = useState({
     name: "",
@@ -57,7 +79,7 @@ const UserModal = ({ isOpen, onClose, userData, onSuccess, availableRoles = [] }
           confirmPassword: "",
           phone: formatPhoneInput(userData.phone || ""),
           employeeId: userData.employeeId || "",
-          role: userData.role || availableRoles[0] || "",
+          role: userData.role || roleOptions[0] || "",
           department: userData.department || "",
           status: userData.status || "Active",
           ipRestrictions:
@@ -75,7 +97,7 @@ const UserModal = ({ isOpen, onClose, userData, onSuccess, availableRoles = [] }
           confirmPassword: "",
           phone: "",
           employeeId: `EMP-${randomNum}`,
-          role: availableRoles[0] || "",
+          role: roleOptions[0] || "",
           department: "",
           status: "Active",
           ipRestrictions: "",
@@ -121,12 +143,14 @@ const UserModal = ({ isOpen, onClose, userData, onSuccess, availableRoles = [] }
       return;
     }
 
+    const normalizedRole = normalizeRoleValue(formData.role);
+
     const payload = {
       name: formData.name,
       email: formData.email,
       phone: formData.phone,
       employeeId: formData.employeeId,
-      role: formData.role,
+      role: normalizedRole,
       department: formData.department,
       status: formData.status,
       ...(formData.password && { password: formData.password }),
@@ -148,6 +172,58 @@ const UserModal = ({ isOpen, onClose, userData, onSuccess, availableRoles = [] }
           successMessage: "User updated successfully!",
         });
       } else {
+        if (normalizedRole === SALES_MANAGER_ROLE_VALUE) {
+          const roleLookup = await apiRequest("/roles", {
+            method: "GET",
+            suppressErrorToast: true,
+            suppressErrorLog: true,
+          });
+
+          const rolesData =
+            roleLookup?.data?.roles ||
+            roleLookup?.roles ||
+            roleLookup?.data ||
+            roleLookup ||
+            [];
+
+          const salesManagerRole = Array.isArray(rolesData)
+            ? rolesData.find(
+                (role) =>
+                  normalizeRoleValue(role?.role) === SALES_MANAGER_ROLE_VALUE,
+              )
+            : null;
+
+          if (!salesManagerRole) {
+            await apiRequest("/roles/createRole", {
+              method: "POST",
+              includeAuth: true,
+              suppressErrorToast: true,
+              data: {
+                role: SALES_MANAGER_ROLE_VALUE,
+                description: "Sales manager access",
+                permissions: SALES_MANAGER_DEFAULT_PERMISSIONS,
+                status: "ACTIVE",
+              },
+            });
+          } else if (String(salesManagerRole?.status || "").toUpperCase() !== "ACTIVE") {
+            await apiRequest(`/roles/updateRole/${salesManagerRole._id}`, {
+              method: "PUT",
+              includeAuth: true,
+              suppressErrorToast: true,
+              data: {
+                role: SALES_MANAGER_ROLE_VALUE,
+                description: salesManagerRole?.description || "Sales manager access",
+                permissions:
+                  Array.isArray(salesManagerRole?.permissions) &&
+                  salesManagerRole.permissions.length > 0
+                    ? salesManagerRole.permissions
+                    : SALES_MANAGER_DEFAULT_PERMISSIONS,
+                status: "ACTIVE",
+              },
+            });
+          }
+        }
+
         response = await apiRequest("/user-management/createUser", {
           method: "POST",
           data: payload,
@@ -328,7 +404,7 @@ const UserModal = ({ isOpen, onClose, userData, onSuccess, availableRoles = [] }
                   required
                 >
                   <option value="">Select role</option>
-                  {availableRoles.map((role) => (
+                  {roleOptions.map((role) => (
                     <option key={role} value={role}>
                       {role}
                     </option>

@@ -7,6 +7,38 @@ import { apiRequest } from "../../authservice/api";
 import { hasPermission, parseStoredPermissions } from "../../authservice/permissions";
 import { listLabOrders } from "../../authservice/labApi";
 
+const EMPTY_RESPONSE = { data: [] };
+
+const safeApiRequest = async (endpoint, allowed) => {
+  if (!allowed) {
+    return EMPTY_RESPONSE;
+  }
+
+  try {
+    return await apiRequest(endpoint, {
+      method: "GET",
+      suppressErrorToast: true,
+    });
+  } catch {
+    return EMPTY_RESPONSE;
+  }
+};
+
+const safeListLabOrders = async (allowed) => {
+  if (!allowed) {
+    return [];
+  }
+
+  try {
+    return await listLabOrders({
+      suppressErrorToast: true,
+      suppressErrorLog: true,
+    });
+  } catch {
+    return [];
+  }
+};
+
 const formatDateInput = (date) => date.toISOString().split("T")[0];
 
 const buildDefaultDates = () => {
@@ -128,11 +160,9 @@ const ProfitLossReportSection = () => {
         setLoading(true);
 
         const [salesRes, testsRes, expenseRes] = await Promise.all([
-          canSaleView ? apiRequest("/sales", { method: "GET" }) : Promise.resolve({ data: [] }),
-          canTestView
-            ? listLabOrders({ suppressErrorToast: true, suppressErrorLog: true })
-            : Promise.resolve([]),
-          canExpenseView ? apiRequest("/expenses", { method: "GET" }) : Promise.resolve({ data: [] }),
+          safeApiRequest("/sales", canSaleView),
+          safeListLabOrders(canTestView),
+          safeApiRequest("/expenses", canExpenseView),
         ]);
 
         const rawSales = Array.isArray(salesRes?.data)
@@ -158,8 +188,7 @@ const ProfitLossReportSection = () => {
         setSales(rawSales.map(normalizeSale));
         setTests(rawTests.map(normalizeTest));
         setExpenses(rawExpenses.map(normalizeExpense));
-      } catch (error) {
-        console.error("Failed to fetch profit and loss report data:", error);
+      } catch {
         setSales([]);
         setTests([]);
         setExpenses([]);

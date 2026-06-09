@@ -104,29 +104,35 @@ const CRUD_RESOURCE_CONFIGS = [
 ];
 
 const PRELOAD_RESOURCE_RULES = [
-  { endpoint: "/customers", canLoad: (permissions) => hasModuleAccess("CUSTOMER", permissions) },
-  { endpoint: "/suppliers", canLoad: (permissions) => hasModuleAccess("SUPPLIER", permissions) },
-  { endpoint: "/products", canLoad: (permissions) => hasModuleAccess("PRODUCT", permissions) },
-  { endpoint: "/purchases", canLoad: (permissions) => hasModuleAccess("PURCHASE", permissions) },
-  { endpoint: "/expenses", canLoad: (permissions) => hasModuleAccess("EXPENSE", permissions) },
-  { endpoint: "/sales", canLoad: (permissions) => hasModuleAccess("SALE", permissions) },
-  { endpoint: "/roles", canLoad: (permissions) => hasModuleAccess("ROLE", permissions) },
-  { endpoint: "/user-management", canLoad: (permissions) => hasModuleAccess("USER", permissions) },
-  { endpoint: "/tests", canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
-  { endpoint: "/testParameters", canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
-  { endpoint: "/lab-categories", canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
+  { endpoints: ["/customers"], canLoad: (permissions) => hasModuleAccess("CUSTOMER", permissions) },
+  {
+    endpoints: ["/suppliers", "/supplierpayments"],
+    canLoad: (permissions) => hasModuleAccess("SUPPLIER", permissions),
+  },
+  {
+    endpoints: ["/products", "/products/ProductName"],
+    canLoad: (permissions) => hasModuleAccess("PRODUCT", permissions),
+  },
+  { endpoints: ["/purchases"], canLoad: (permissions) => hasModuleAccess("PURCHASE", permissions) },
+  { endpoints: ["/expenses"], canLoad: (permissions) => hasModuleAccess("EXPENSE", permissions) },
+  { endpoints: ["/sales"], canLoad: (permissions) => hasModuleAccess("SALE", permissions) },
+  { endpoints: ["/roles"], canLoad: (permissions) => hasModuleAccess("ROLE", permissions) },
+  { endpoints: ["/user-management"], canLoad: (permissions) => hasModuleAccess("USER", permissions) },
+  { endpoints: ["/tests"], canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
+  { endpoints: ["/testParameters"], canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
+  { endpoints: ["/lab-categories"], canLoad: (permissions) => hasPermission("TEST_VIEW", permissions) },
 ];
 
 function getPreloadEndpoints(permissions = []) {
   const safePermissions = Array.isArray(permissions) ? permissions : [];
 
-  return PRELOAD_RESOURCE_RULES.filter(({ canLoad }) => {
+  return PRELOAD_RESOURCE_RULES.flatMap(({ endpoints, canLoad }) => {
     if (safePermissions.includes("*")) {
-      return true;
+      return endpoints;
     }
 
-    return canLoad(safePermissions);
-  }).map(({ endpoint }) => endpoint);
+    return canLoad(safePermissions) ? endpoints : [];
+  });
 }
 
 function normalizeAuthTokenValue(value) {

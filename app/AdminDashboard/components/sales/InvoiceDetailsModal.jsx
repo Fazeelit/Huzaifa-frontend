@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Pen, Printer, RotateCcw, Trash2, X } from "lucide-react";
+import { Pen, Printer, RotateCcw, X } from "lucide-react";
 import { blockedButtonClass, blockedButtonProps } from "../../authservice/permissions";
 
 const toNumber = (value) => {
@@ -21,6 +21,22 @@ const getReturnedSaleQuantity = (item = {}) =>
     0
   );
 
+const getStatusLabel = (status) => {
+  const normalizedStatus = String(status || "SOLD").toUpperCase();
+
+  if (normalizedStatus === "RETURNED") return "Returned";
+  if (normalizedStatus === "CLAIM") return "Claim";
+  return "Sold";
+};
+
+const getStatusBadgeClass = (status) => {
+  const normalizedStatus = String(status || "SOLD").toUpperCase();
+
+  if (normalizedStatus === "RETURNED") return "bg-rose-100 text-rose-700";
+  if (normalizedStatus === "CLAIM") return "bg-amber-100 text-amber-700";
+  return "bg-emerald-100 text-emerald-700";
+};
+
 export default function InvoiceDetailsModal({
   sale,
   onClose,
@@ -38,12 +54,16 @@ export default function InvoiceDetailsModal({
   const [isEditMode, setIsEditMode] = React.useState(false);
   const [statusDraft, setStatusDraft] = React.useState({});
   const [returnedDraft, setReturnedDraft] = React.useState({});
+  const [savedStatusMap, setSavedStatusMap] = React.useState({});
+  const [savedReturnedMap, setSavedReturnedMap] = React.useState({});
 
   React.useEffect(() => {
     setSelectedRows({});
     setIsEditMode(false);
     setStatusDraft({});
     setReturnedDraft({});
+    setSavedStatusMap({});
+    setSavedReturnedMap({});
   }, [sale?._id]);
 
   if (!sale) return null;
@@ -51,7 +71,9 @@ export default function InvoiceDetailsModal({
   const items = Array.isArray(sale.products) ? sale.products : [];
   const rows = items.map((item, index) => {
     const qty = toNumber(item.chargedQuantity ?? item.quantity ?? item.qty ?? 0);
-    const baseReturnedQty = getReturnedSaleQuantity(item);
+    const baseReturnedQty = Number.isFinite(savedReturnedMap[index])
+      ? savedReturnedMap[index]
+      : getReturnedSaleQuantity(item);
     const draftReturnedQty = returnedDraft[index];
     const returnedQty = Number.isFinite(draftReturnedQty)
       ? Math.max(0, Math.min(draftReturnedQty, qty))
@@ -61,7 +83,7 @@ export default function InvoiceDetailsModal({
     const salePrice = toNumber(item.salePrice ?? item.price ?? item.purchasePrice ?? item.cost ?? 0);
     const total = displaySoldQty * salePrice;
     const derivedStatus = returnedQty >= qty && qty > 0 ? "RETURNED" : "SOLD";
-    const baseStatus = String(item.status || derivedStatus).toUpperCase();
+    const baseStatus = String(savedStatusMap[index] || item.status || derivedStatus).toUpperCase();
     const status = String(statusDraft[index] || baseStatus).toUpperCase();
     return {
       sNo: index + 1,
@@ -208,6 +230,16 @@ export default function InvoiceDetailsModal({
       return;
     }
 
+    const nextSavedStatusMap = {};
+    const nextSavedReturnedMap = {};
+    updates.forEach((update) => {
+      nextSavedStatusMap[update.index] = String(update.status || "SOLD").toUpperCase();
+      nextSavedReturnedMap[update.index] = Number(update.returnedQuantity || 0);
+    });
+
+    setSavedStatusMap((prev) => ({ ...prev, ...nextSavedStatusMap }));
+    setSavedReturnedMap((prev) => ({ ...prev, ...nextSavedReturnedMap }));
+
     await onUpdateStatuses(sale, updates);
     setIsEditMode(false);
     setStatusDraft({});
@@ -300,16 +332,13 @@ export default function InvoiceDetailsModal({
                           >
                             <option value="SOLD">Sold</option>
                             <option value="RETURNED">Returned</option>
+                            <option value="CLAIM">Claim</option>
                           </select>
                         ) : (
                           <span
-                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                              row.status === "RETURNED"
-                                ? "bg-rose-100 text-rose-700"
-                                : "bg-emerald-100 text-emerald-700"
-                            }`}
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(row.status)}`}
                           >
-                            {row.status === "RETURNED" ? "Returned" : "Sold"}
+                            {getStatusLabel(row.status)}
                           </span>
                         )}
                       </td>
@@ -401,17 +430,6 @@ export default function InvoiceDetailsModal({
             >
               <RotateCcw size={16} />
               {isReturning ? "Returning..." : `Return Selected (${selectedIndexes.length})`}
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={!canDelete || !onDelete || isDeleting || isSavingStatuses}
-              className={`inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-500 px-4 py-2 text-sm font-semibold text-white shadow-md hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto ${blockedButtonClass} blocked-action`}
-              {...blockedButtonProps(canDelete)}
-              title="Delete this sale"
-            >
-              <Trash2 size={16} />
-              {isDeleting ? "Deleting..." : "Delete"}
             </button>
             <button
               type="button"

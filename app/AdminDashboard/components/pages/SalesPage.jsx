@@ -809,13 +809,39 @@ const SalesPage = () => {
       delete requestBody.updatedAt;
       delete requestBody.__v;
 
+      const optimisticSale = {
+        ...sale,
+        _id: sale._id,
+        products: updatedProducts,
+        subtotal,
+        totalAmount,
+        paidAmount,
+        returnedAmount,
+        returnAmount,
+        paymentStatus,
+      };
+
       const res = await apiRequest(`/sales/updateSale/${sale._id}`, {
         method: "PUT",
         data: requestBody,
       });
 
-      if (res?.success && res?.data) {
-        setSelectedSale(res.data);
+      if (res?.success) {
+        const resolvedSale = res?.data || res?.sale || optimisticSale;
+        setSelectedSale(resolvedSale);
+        setSales((prev) =>
+          prev.map((entry) =>
+            String(entry?._id || "") === String(sale?._id || "")
+              ? {
+                  ...entry,
+                  ...resolvedSale,
+                  products: Array.isArray(resolvedSale?.products)
+                    ? resolvedSale.products
+                    : optimisticSale.products,
+                }
+              : entry,
+          ),
+        );
         await fetchSales({ silent: true });
       }
     } catch (error) {

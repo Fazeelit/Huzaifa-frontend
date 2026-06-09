@@ -5,6 +5,38 @@ import { apiRequest } from "../../authservice/api";
 import { hasPermission, parseStoredPermissions } from "../../authservice/permissions";
 import { listLabOrders } from "../../authservice/labApi";
 
+const EMPTY_RESPONSE = { data: [] };
+
+const safeApiRequest = async (endpoint, allowed) => {
+  if (!allowed) {
+    return EMPTY_RESPONSE;
+  }
+
+  try {
+    return await apiRequest(endpoint, {
+      method: "GET",
+      suppressErrorToast: true,
+    });
+  } catch {
+    return EMPTY_RESPONSE;
+  }
+};
+
+const safeListLabOrders = async (allowed) => {
+  if (!allowed) {
+    return [];
+  }
+
+  try {
+    return await listLabOrders({
+      suppressErrorToast: true,
+      suppressErrorLog: true,
+    });
+  } catch {
+    return [];
+  }
+};
+
 const PeriodSummary = () => {
   const [summaryItems, setSummaryItems] = useState([
     { label: "Sales Transactions", value: 0 },
@@ -14,18 +46,18 @@ const PeriodSummary = () => {
 
   useEffect(() => {
     const fetchPeriodData = async () => {
+      const today = new Date();
+      const startDate = new Date();
+      startDate.setDate(today.getDate() - 30);
+      const permissions = parseStoredPermissions();
+
+      const canSaleView = hasPermission("SALE_VIEW", permissions);
+      const canTestView = hasPermission("TEST_VIEW", permissions);
+      const canExpenseView = hasPermission("EXPENSE_VIEW", permissions);
+
       try {
-        const today = new Date();
-        const startDate = new Date();
-        startDate.setDate(today.getDate() - 30);
-        const permissions = parseStoredPermissions();
-
-        const canSaleView = hasPermission("SALE_VIEW", permissions);
-        const canTestView = hasPermission("TEST_VIEW", permissions);
-        const canExpenseView = hasPermission("EXPENSE_VIEW", permissions);
-
         // ---------------- SALES (COMPLETED ONLY) ----------------
-        const salesRes = canSaleView ? await apiRequest("/sales") : { data: [] };
+        const salesRes = await safeApiRequest("/sales", canSaleView);
         const salesData = Array.isArray(salesRes?.data)
           ? salesRes.data
           : Array.isArray(salesRes?.data?.data)
@@ -42,9 +74,7 @@ const PeriodSummary = () => {
         });
 
         // ---------------- TESTS ----------------
-        const testsRes = canTestView
-          ? await listLabOrders({ suppressErrorToast: true, suppressErrorLog: true })
-          : [];
+        const testsRes = await safeListLabOrders(canTestView);
         const testsData = Array.isArray(testsRes)
           ? testsRes
           : Array.isArray(testsRes?.data)
@@ -58,7 +88,7 @@ const PeriodSummary = () => {
         );
 
         // ---------------- EXPENSES ----------------
-        const expensesRes = canExpenseView ? await apiRequest("/expenses") : { data: [] };
+        const expensesRes = await safeApiRequest("/expenses", canExpenseView);
         const expensesData = Array.isArray(expensesRes?.data)
           ? expensesRes.data
           : Array.isArray(expensesRes?.data?.data)
@@ -79,8 +109,12 @@ const PeriodSummary = () => {
           { label: "Tests Conducted", value: testsLast30.length },
           { label: "Total Expenses", value: totalExpenses.toFixed(2) },
         ]);
-      } catch (error) {
-        console.error("Failed to fetch period summary:", error);
+      } catch {
+        setSummaryItems([
+          { label: "Sales Transactions", value: 0 },
+          { label: "Tests Conducted", value: 0 },
+          { label: "Total Expenses", value: 0 },
+        ]);
       }
     };
 

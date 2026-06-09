@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -27,6 +27,7 @@ const parseAmount = (value) => {
 };
 
 const formatRs = (value) => `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
+const CRUD_CACHE_KEY = "appCrudResponseCache";
 
 const formatDate = (value) => {
   if (!value) return "N/A";
@@ -88,6 +89,125 @@ const getTransactionSortValue = (timestamp, fallbackDate = "") => {
   const first = new Date(timestamp || fallbackDate);
   if (!Number.isNaN(first.getTime())) return first.getTime();
   return 0;
+};
+
+const getEntityTimestamp = (entry) => {
+  const value = new Date(entry?.updatedAt || entry?.createdAt || entry?.saleDate || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
+};
+
+const extractSalesArray = (response) =>
+  Array.isArray(response?.data)
+    ? response.data
+    : Array.isArray(response?.sales)
+      ? response.sales
+      : Array.isArray(response)
+        ? response
+        : [];
+
+const hasClaimStatus = (sale) =>
+  (Array.isArray(sale?.items) ? sale.items : Array.isArray(sale?.products) ? sale.products : []).some(
+    (item) => String(item?.status || "").trim().toUpperCase() === "CLAIM",
+  );
+
+const readCachedSales = () => {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(CRUD_CACHE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    return extractSalesArray(parsed?.["/sales"]);
+  } catch {
+    return [];
+  }
+};
+
+const mergeLatestSales = (networkSales) => {
+  const cachedSales = readCachedSales();
+  if (!cachedSales.length) {
+    return networkSales;
+  }
+
+  const cachedByKey = new Map();
+  cachedSales.forEach((sale) => {
+    const keys = [sale?._id, sale?.invoiceNo, sale?.invoiceNumber]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    keys.forEach((key) => {
+      cachedByKey.set(key, sale);
+    });
+  });
+
+  return networkSales.map((sale) => {
+    const keys = [sale?._id, sale?.invoiceNo, sale?.invoiceNumber]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    const cachedSale = keys.map((key) => cachedByKey.get(key)).find(Boolean);
+    if (!cachedSale) {
+      return sale;
+    }
+
+    if (hasClaimStatus(cachedSale) && !hasClaimStatus(sale)) {
+      return cachedSale;
+    }
+
+    return getEntityTimestamp(cachedSale) > getEntityTimestamp(sale) ? cachedSale : sale;
+  });
+};
+
+const matchesCustomerSale = (sale, customer) => {
+  const saleCustomer = sale?.customer || sale?.selectedCustomer || {};
+  const saleCustomerId = sale?.customerId || saleCustomer?._id || saleCustomer?.id || "";
+  const targetId = customer?.id || customer?._id || "";
+  const saleName = String(sale?.customerName || saleCustomer?.name || "")
+    .trim()
+    .toLowerCase();
+  const targetName = String(customer?.name || "")
+    .trim()
+    .toLowerCase();
+  const saleCnic = String(saleCustomer?.cnic || "").trim();
+  const targetCnic = String(customer?.cnic || "").trim();
+  const salePhone = String(saleCustomer?.phone || saleCustomer?.mobile || "").trim();
+  const targetPhone = String(customer?.phone || customer?.mobile || "").trim();
+
+  return (
+    (targetId && saleCustomerId && String(saleCustomerId) === String(targetId)) ||
+    (targetCnic && saleCnic && saleCnic === targetCnic) ||
+    (targetPhone && salePhone && salePhone === targetPhone) ||
+    (targetName && saleName === targetName)
+  );
+};
+
+const getEntryMatchKeys = (...values) =>
+  values
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+
+const getProductSaleStatus = (item = {}) => {
+  const explicitStatus = String(item?.status || "").trim().toUpperCase();
+  if (explicitStatus) {
+    return explicitStatus;
+  }
+
+  const quantity = Number(item?.chargedQuantity ?? item?.quantity ?? item?.qty ?? 0) || 0;
+  const returnedQuantity =
+    Number(
+      item?.returnedQuantity ??
+        item?.returnedQty ??
+        item?.returnQty ??
+        item?.quantityReturned ??
+        0,
+    ) || 0;
+
+  return returnedQuantity >= quantity && quantity > 0 ? "RETURNED" : "SOLD";
 };
 
 export default function CustomerDetailPage() {
@@ -163,52 +283,69 @@ export default function CustomerDetailPage() {
     });
   }, [showPaymentModal, selectedBill]);
 
-  useEffect(() => {
-    const loadCustomer = async () => {
-      if (!customerId) {
-        setLoading(false);
-        return;
-      }
+  const loadCustomerData = useCallback(async ({ silent = false } = {}) => {
+    if (!customerId) {
+      setLoading(false);
+      return;
+    }
 
+    if (!silent) {
       setLoading(true);
-      try {
-        const [customerResponse, salesResponse] = await Promise.all([
-          apiRequest(`/customers/${customerId}`, { method: "GET" }),
-          apiRequest("/sales", { method: "GET", suppressErrorToast: true, suppressErrorLog: true }),
-        ]);
+    }
 
-        if (customerResponse?.success && customerResponse?.customer) {
-          const normalizedCustomer = normalizeCustomer(customerResponse.customer);
-          setCustomer(normalizedCustomer);
+    try {
+      const [customerResponse, salesResponse] = await Promise.all([
+        apiRequest(`/customers/${customerId}`, { method: "GET", suppressErrorToast: silent }),
+        apiRequest("/sales", {
+          method: "GET",
+          suppressErrorToast: true,
+          suppressErrorLog: true,
+        }),
+      ]);
 
-          const salesArray = Array.isArray(salesResponse?.data)
-            ? salesResponse.data
-            : Array.isArray(salesResponse?.sales)
-              ? salesResponse.sales
-              : Array.isArray(salesResponse)
-                ? salesResponse
-                : [];
+      if (customerResponse?.success && customerResponse?.customer) {
+        const normalizedCustomer = normalizeCustomer(customerResponse.customer);
+        setCustomer(normalizedCustomer);
 
-          const matchedSales = salesArray.filter((sale) => {
-            const saleName = String(sale?.customerName || sale?.customer?.name || "").trim().toLowerCase();
-            const targetName = String(normalizedCustomer?.name || "").trim().toLowerCase();
-            return targetName && saleName === targetName;
-          });
+        const salesArray = mergeLatestSales(extractSalesArray(salesResponse));
 
-          setCustomerSales(matchedSales);
-        } else {
-          setCustomer(null);
-        }
-      } catch (error) {
-        console.error("Customer detail load error:", error);
+        setCustomerSales(salesArray.filter((sale) => matchesCustomerSale(sale, normalizedCustomer)));
+      } else {
         setCustomer(null);
-      } finally {
+      }
+    } catch (error) {
+      console.error("Customer detail load error:", error);
+      setCustomer(null);
+    } finally {
+      if (!silent) {
         setLoading(false);
+      }
+    }
+  }, [customerId]);
+
+  useEffect(() => {
+    loadCustomerData();
+
+    const handleFocus = () => loadCustomerData({ silent: true });
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadCustomerData({ silent: true });
       }
     };
 
-    loadCustomer();
-  }, [customerId]);
+    const intervalId = window.setInterval(() => {
+      loadCustomerData({ silent: true });
+    }, 15000);
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadCustomerData]);
 
   useEffect(() => {
     setTransactionPage(1);
@@ -216,38 +353,24 @@ export default function CustomerDetailPage() {
 
   const displayBills = (() => {
     const sourceBills = Array.isArray(customer?.bills) ? customer.bills : [];
-    if (sourceBills.length) {
-      return sourceBills.map((bill) => {
-        const amount = parseAmount(bill?.amount);
-        const paid = parseAmount(bill?.paidAmount);
-        const remaining = Math.max(amount - paid, 0);
-        return {
-          ...bill,
-          id: String(bill?.id || ""),
-          date: bill?.date || "",
-          description: bill?.description || "N/A",
-          amount: formatRs(amount),
-          paidAmount: formatRs(paid),
-          remainingAmount: formatRs(remaining),
-          amountNumber: amount,
-          paidAmountNumber: paid,
-          remainingAmountNumber: remaining,
-          status:
-            remaining <= 0
-              ? "paid"
-              : paid > 0
-                ? "partial"
-                : String(bill?.status || "pending").toLowerCase(),
-          reference: String(bill?.id || ""),
-          transactionTimestamp: bill?.updatedAt || bill?.date || customer?.updatedAt || "",
-          source: "bill",
-        };
+    const sourceBillsByKey = new Map();
+
+    sourceBills.forEach((bill) => {
+      getEntryMatchKeys(bill?.id, bill?.reference, bill?.billId).forEach((key) => {
+        sourceBillsByKey.set(key, bill);
       });
-    }
+    });
 
     return customerSales.map((sale, index) => {
       const totalAmount = Number(sale?.totalAmount || sale?.total || 0);
-      const paidAmount = Number(sale?.paidAmount || 0);
+      const matchedStoredBill = getEntryMatchKeys(sale?._id, sale?.invoiceNo, sale?.invoiceNumber)
+        .map((key) => sourceBillsByKey.get(key))
+        .find(Boolean);
+      const paidAmount = Number(
+        sale?.paidAmount ??
+          matchedStoredBill?.paidAmount ??
+          0
+      );
       const remaining = Math.max(totalAmount - paidAmount, 0);
       const description = (Array.isArray(sale?.products) ? sale.products : [])
         .map((item) => item?.name)
@@ -265,8 +388,13 @@ export default function CustomerDetailPage() {
         paidAmountNumber: paidAmount,
         remainingAmountNumber: remaining,
         status: remaining <= 0 ? "paid" : paidAmount > 0 ? "partial" : "pending",
-        reference: String(sale?.invoiceNo || sale?._id || ""),
-        transactionTimestamp: sale?.updatedAt || sale?.createdAt || sale?.saleDate || "",
+        reference: String(sale?.invoiceNo || sale?.invoiceNumber || sale?._id || ""),
+        transactionTimestamp:
+          sale?.updatedAt ||
+          matchedStoredBill?.updatedAt ||
+          sale?.createdAt ||
+          sale?.saleDate ||
+          "",
         source: "bill",
       };
     });
@@ -359,19 +487,22 @@ export default function CustomerDetailPage() {
   const totalOutstandingAmount = displayBills.reduce((sum, bill) => sum + bill.remainingAmountNumber, 0);
 
   const purchasedProducts = customerSales.flatMap((sale, saleIndex) =>
-    (Array.isArray(sale?.products) ? sale.products : []).map((item, itemIndex) => ({
+    (Array.isArray(sale?.items) ? sale.items : Array.isArray(sale?.products) ? sale.products : []).map((item, itemIndex) => ({
       id: [
         String(sale?._id || saleIndex),
         String(item?.productId?._id || item?.productId || itemIndex),
-        String(item?.name || itemIndex),
+        String(item?.productName || item?.name || itemIndex),
         String(itemIndex),
       ].join("-"),
       date: sale?.saleDate || sale?.createdAt || "",
       reference: sale?.invoiceNo || sale?._id || "-",
-      name: item?.name || "Item",
+      name: item?.productName || item?.name || "Item",
       quantity: Number(item?.quantity || 0),
-      unitPrice: Number(item?.salePrice || 0),
-      total: Number(item?.salePrice || 0) * Number(item?.quantity || 0),
+      unitPrice: Number((item?.unitPrice ?? item?.salePrice) || 0),
+      status: getProductSaleStatus(item),
+      total:
+        Number(item?.totalPrice ?? 0) ||
+        Number((item?.unitPrice ?? item?.salePrice) || 0) * Number(item?.quantity || 0),
     }))
   );
 
@@ -430,18 +561,18 @@ export default function CustomerDetailPage() {
       return;
     }
 
-    const currentBills = (Array.isArray(customer.bills) && customer.bills.length
-      ? customer.bills
-      : displayBills.map((bill) => ({
-          id: String(bill.id || ""),
-          date: bill.date || "",
-          description: bill.description || "",
-          amount: bill.amount,
-          paidAmount: bill.paidAmount,
-          status: bill.status,
-          dueDate: bill.dueDate || "",
-          notes: "",
-         }))).map((bill) => ({ ...bill }));
+    const currentBills = displayBills
+      .map((bill) => ({
+        id: String(bill.id || ""),
+        date: bill.date || "",
+        description: bill.description || "",
+        amount: bill.amount,
+        paidAmount: bill.paidAmount,
+        status: bill.status,
+        dueDate: bill.dueDate || "",
+        notes: "",
+      }))
+      .map((bill) => ({ ...bill }));
     const currentPayments = [...(Array.isArray(customer.paymentHistory) ? customer.paymentHistory : [])];
     const paymentDate = paymentForm.date || new Date().toISOString().split("T")[0];
     const updatedSalesMap = new Map();
@@ -827,7 +958,7 @@ export default function CustomerDetailPage() {
                 <table className="w-full min-w-[760px]">
                   <thead className="bg-gray-100 dark:bg-gray-700/60">
                     <tr>
-                      {["Date", "Reference", "Product", "Qty", "Unit Price", "Total"].map((label) => (
+                      {["Date", "Reference", "Product", "Qty", "Unit Price", "Status", "Total"].map((label) => (
                         <th key={label} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300">{label}</th>
                       ))}
                     </tr>
@@ -835,7 +966,7 @@ export default function CustomerDetailPage() {
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                     {purchasedProducts.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">No products found for this customer.</td>
+                        <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">No products found for this customer.</td>
                       </tr>
                     ) : (
                       purchasedProducts.map((product) => (
@@ -845,6 +976,23 @@ export default function CustomerDetailPage() {
                           <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">{product.name}</td>
                           <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{product.quantity}</td>
                           <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{formatRs(product.unitPrice)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                product.status === "RETURNED"
+                                  ? "bg-rose-100 text-rose-700"
+                                  : product.status === "CLAIM"
+                                    ? "bg-amber-100 text-amber-700"
+                                    : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {product.status === "RETURNED"
+                                ? "Returned"
+                                : product.status === "CLAIM"
+                                  ? "Claim"
+                                  : "Sold"}
+                            </span>
+                          </td>
                           <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{formatRs(product.total)}</td>
                         </tr>
                       ))
