@@ -28,10 +28,17 @@ const getPackSize = (item) => {
 const getQuantityMode = (item) => (item?.quantityMode === "pack" ? "pack" : "unit");
 
 const getSelectedSalePrice = (item, quantityMode = getQuantityMode(item)) => {
+  const customUnitSalePrice = Number(item?.customUnitSalePrice);
+  const packSize = getPackSize(item);
+  if (Number.isFinite(customUnitSalePrice) && customUnitSalePrice >= 0) {
+    return quantityMode === "pack"
+      ? Number((customUnitSalePrice * packSize).toFixed(2))
+      : Number(customUnitSalePrice.toFixed(2));
+  }
+
   const wholeSalePrice = Number(item?.wholeSalePrice ?? item?.wholesalePrice ?? 0) || 0;
   const retailSalePrice = Number(item?.retailSalePrice ?? item?.salePrice ?? item?.price ?? item?.purchasePrice ?? item?.cost ?? 0) || 0;
   const maxAllowedDiscount = Number(item?.maxAllowedDiscount ?? 0) || 0;
-  const packSize = getPackSize(item);
   const discountedRetailSalePrice = Number(
     (retailSalePrice - (retailSalePrice * maxAllowedDiscount) / 100).toFixed(2)
   );
@@ -56,6 +63,7 @@ export default function ProductsCard({
   decreaseQty,
   updateQty,
   updateQuantityMode,
+  updateLineAmount,
   updateFreeQty,
   removeItem,
 }) {
@@ -63,7 +71,9 @@ export default function ProductsCard({
   const [searchTerm, setSearchTerm] = useState("");
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const [highlightedProductIndex, setHighlightedProductIndex] = useState(-1);
+  const [amountDrafts, setAmountDrafts] = useState({});
   const productSearchRef = useRef(null);
+  const editingAmountKeyRef = useRef(null);
 
   const processedProducts = useMemo(() => {
     const map = new Map();
@@ -136,6 +146,27 @@ export default function ProductsCard({
     document.addEventListener("mousedown", handleDocumentClick);
     return () => document.removeEventListener("mousedown", handleDocumentClick);
   }, []);
+
+  useEffect(() => {
+    setAmountDrafts((prev) => {
+      const next = { ...prev };
+
+      cart.forEach((item) => {
+        if (editingAmountKeyRef.current === item.key) return;
+
+        const quantityMode = getQuantityMode(item);
+        const salePrice = getSelectedSalePrice(item, quantityMode);
+        const displayQty = getDisplayQty(item);
+        next[item.key] = String(Number((salePrice * displayQty).toFixed(2)));
+      });
+
+      Object.keys(next).forEach((key) => {
+        if (!cart.some((item) => item.key === key)) delete next[key];
+      });
+
+      return next;
+    });
+  }, [cart]);
 
   const handleAdd = async (product) => {
     try {
@@ -261,7 +292,7 @@ export default function ProductsCard({
 
       <div className="overflow-hidden rounded-xl border border-white/70 bg-white/80 shadow-lg shadow-black/5">
            <div className="bg-gradient-to-r from-blue-600 to-emerald-500 p-3 text-white">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-0">
             <ShoppingCart className="h-4 w-4" />
             <span className="font-semibold">Product Sale Table</span>
           </div>
@@ -278,13 +309,14 @@ export default function ProductsCard({
              <table className="w-full min-w-[760px] divide-y divide-slate-200">
               <thead className="bg-slate-50/90">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Product Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Menufacture</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Sale Type</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Quantity</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Retail Price</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Total Price</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Delete</th>
+                  <th className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Product Name</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Menufacture</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Sale Type</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Quantity</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Amount</th>
+                  <th className="px-1.5 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Retail Price</th>
+                  <th className="px-1.5 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Total Price</th>
+                  <th className="pl-1.5 pr-1 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Delete</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -316,7 +348,7 @@ export default function ProductsCard({
 
                   return (
                     <tr key={item.key || item._id || item.id} className="align-top">
-                       <td className="px-3 py-3 sm:px-4">
+                       <td className="px-4 py-2.5 sm:px-3">
                          <p className="break-words text-xs font-semibold text-slate-900" style={urduNameStyle}>
                           {item.name}
                         </p>
@@ -329,11 +361,11 @@ export default function ProductsCard({
                           </p>
                         )}
                       </td>
-                       <td className="px-3 py-3 text-xs text-black sm:px-4">
+                       <td className="px-2 py-2.5 text-xs text-black sm:px-3">
                         <p className="break-words">{item.manufacturer || "-"}</p>
                       </td>
-                       <td className="px-2 py-3 sm:px-3">
-                        <div className="flex min-w-[60px] items-center gap-1.5 text-xs">
+                       <td className="px-1.5 py-2.5 sm:px-2">
+                        <div className="flex min-w-[60px] items-center gap-1 text-xs">
                           <select
                             value={quantityMode}
                             onChange={(event) => updateQuantityMode?.(item.key, event.target.value)}
@@ -346,8 +378,8 @@ export default function ProductsCard({
                           </select>
                         </div>
                       </td>
-                       <td className="px-1 py-3 sm:px-1">
-                         <div className="flex min-w-[90px] items-center gap-1 rounded-lg border border-slate-200 px-1.5 py-1">
+                       <td className="px-1 py-2.5 sm:px-1">
+                         <div className="flex min-w-[90px] items-center gap-0.5 rounded-lg border border-slate-200 px-1 py-1">
                           <button
                             type="button"
                             onClick={() => decreaseQty?.(item.key, 1)}
@@ -378,7 +410,7 @@ export default function ProductsCard({
                             <Plus className="h-3 w-3" />
                           </button>
                         </div>
-                        <div className="mt-2 flex items-center gap-1">
+                        <div className="mt-1.5 flex items-center gap-0.5">
                           <label className="shrink-0 font-bold text-[12px] font-bold text-black">Free</label>
                           <input
                             type="text"
@@ -391,18 +423,49 @@ export default function ProductsCard({
                             className="w-10 rounded-md border border-slate-300 px-1 py-1 font-bold text-[12px] text-black text-center outline-none focus:border-blue-300"
                           />
                         </div>
-                        
-                      </td>
-                       <td className="px-3 py-3 text-sm font-medium text-slate-900 sm:px-4">
-                        <p className="break-words">PKR {salePrice.toLocaleString()}</p>
+                         
+                       </td>
+                       <td className="px-2 py-2.5 sm:px-3">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={amountDrafts[item.key] ?? String(Number(totalPrice.toFixed(2)))}
+                          onFocus={() => {
+                            editingAmountKeyRef.current = item.key;
+                          }}
+                          onChange={(event) => {
+                            const nextValue = String(event.target.value || "").replace(/[^\d.]/g, "");
+                            setAmountDrafts((prev) => ({ ...prev, [item.key]: nextValue }));
+                            updateLineAmount?.(item.key, nextValue);
+                          }}
+                          onBlur={() => {
+                            editingAmountKeyRef.current = null;
+                            const nextValue = amountDrafts[item.key] ?? "";
+                            const numericAmount = Number(nextValue);
+
+                            if (!nextValue.trim() || (Number.isFinite(numericAmount) && numericAmount >= 0)) {
+                              updateLineAmount?.(item.key, nextValue);
+                              return;
+                            }
+
+                            setAmountDrafts((prev) => ({
+                              ...prev,
+                              [item.key]: String(Number(totalPrice.toFixed(2))),
+                            }));
+                          }}
+                          className="w-20 rounded-md border border-slate-300 bg-white px-2 py-2 text-center text-sm font-medium text-slate-900 outline-none focus:border-blue-400"
+                        />
+                       </td>
+                       <td className="px-1.5 py-2.5 text-sm font-medium text-slate-900 sm:px-2">
+                         <p className="break-words">PKR {salePrice.toLocaleString()}</p>
                         <p className="mt-1 break-words text-xs font-medium text-slate-500">
                           P.Prince: {unitPurchasePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
                       </td>
-                       <td className="px-3 py-3 text-sm font-semibold text-blue-600 sm:px-4">
+                       <td className="px-1.5 py-2.5 text-sm font-semibold text-blue-600 sm:px-2">
                          <p className="break-words">PKR {totalPrice.toLocaleString()}</p>
                       </td>
-                       <td className="px-3 py-3 sm:px-4">
+                       <td className="pl-1.5 pr-1 py-2.5 sm:pl-2 sm:pr-1">
                         <button
                           type="button"
                           onClick={() => removeItem?.(item.key)}

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { apiRequest } from "./../../authservice/api";
 import { hasPermission, parseStoredPermissions } from "../../authservice/permissions";
 import { Eye, EyeOff } from "lucide-react";
+import { computeDailyCashSnapshot, getSupplierPaymentsArray } from "../../utils/dailyCash";
 
 const DAILY_CASH_RESET_MONTH = 0;
 const DAILY_CASH_RESET_DAY = 1;
@@ -73,6 +74,13 @@ const getCustomersArray = (res) =>
     ? res.customers
     : Array.isArray(res?.data?.customers)
     ? res.data.customers
+    : getArray(res);
+
+const getSuppliersArray = (res) =>
+  Array.isArray(res?.suppliers)
+    ? res.suppliers
+    : Array.isArray(res?.data?.suppliers)
+    ? res.data.suppliers
     : getArray(res);
 
 const getCustomerPaymentHistory = (customer) =>
@@ -146,6 +154,7 @@ const SummaryCards = () => {
         const canExpenseView = hasPermission("EXPENSE_VIEW", permissions);
         const canProductView = hasPermission("PRODUCT_VIEW", permissions);
         const canPurchaseView = hasPermission("PURCHASE_VIEW", permissions);
+        const canSupplierView = hasPermission("SUPPLIER_VIEW", permissions);
 
         /* ================= FETCH ALL ================= */
         const [
@@ -154,6 +163,8 @@ const SummaryCards = () => {
           productRes,
           purchaseRes,
           customersRes,
+          suppliersRes,
+          supplierPaymentsRes,
         ] = await Promise.all([
           canSaleView ? apiRequest("/sales") : Promise.resolve({ data: [] }),
           canExpenseView ? apiRequest("/expenses") : Promise.resolve({ data: [] }),
@@ -162,6 +173,13 @@ const SummaryCards = () => {
           hasPermission("CUSTOMER_VIEW", permissions)
             ? apiRequest("/customers")
             : Promise.resolve({ customers: [] }),
+          canSupplierView ? apiRequest("/suppliers") : Promise.resolve({ data: [] }),
+          canSupplierView
+            ? apiRequest("/supplierpayments", {
+                suppressErrorToast: true,
+                suppressErrorLog: true,
+              })
+            : Promise.resolve({ data: [] }),
         ]);
 
          const sales = getArray(salesRes);
@@ -173,6 +191,8 @@ const SummaryCards = () => {
          const purchases = getArray(purchaseRes);
 
          const customers = getCustomersArray(customersRes);
+         const suppliers = getSuppliersArray(suppliersRes);
+         const supplierPayments = getSupplierPaymentsArray(supplierPaymentsRes);
 
         /* ================= TODAY FILTER ================= */
         const todaysSales = sales.filter((s) =>
@@ -218,68 +238,15 @@ const SummaryCards = () => {
           return sum + getSaleTotal(sale);
         }, 0);
 
-        const dailyCashMovementByDay = new Map();
-
-        const addCashMovement = (date, amount) => {
-          const dayKey = getDayKey(date);
-          if (!dayKey || !amount) return;
-
-          dailyCashMovementByDay.set(
-            dayKey,
-            (dailyCashMovementByDay.get(dayKey) || 0) + amount
-          );
-        };
-
-        sales.forEach((sale) => {
-          if (!isWalkInSale(sale)) return;
-          addCashMovement(sale.saleDate || sale.createdAt, getSaleTotal(sale));
+        const { dailyCash } = computeDailyCashSnapshot({
+          sales,
+          expenses,
+          customers,
+          suppliers,
+          purchases,
+          supplierPayments,
+          targetDate: today,
         });
-
-        customers.forEach((customer) => {
-          getCustomerPaymentHistory(customer).forEach((payment) => {
-            if (!isCashPaymentMethod(payment?.method || payment?.paymentMethod)) return;
-            addCashMovement(
-              payment?.date || payment?.paymentDate || payment?.createdAt,
-              toNumber(payment?.amount)
-            );
-          });
-        });
-
-        expenses.forEach((expense) => {
-          addCashMovement(
-            expense.date || expense.createdAt,
-            -toNumber(expense.amount || expense.totalamount)
-          );
-        });
-
-        const todayKey = getDayKey(today);
-        const currentYearStartKey = getDayKey(getStartOfYear(today));
-        const relevantDayKeys = Array.from(dailyCashMovementByDay.keys())
-          .filter((dayKey) => !currentYearStartKey || dayKey >= currentYearStartKey)
-          .sort();
-
-        if (todayKey && !relevantDayKeys.includes(todayKey)) {
-          relevantDayKeys.push(todayKey);
-          relevantDayKeys.sort();
-        }
-
-        const computedDailyCashByDay = new Map();
-        relevantDayKeys.forEach((dayKey, index) => {
-          let previousPositiveDailyCash = 0;
-
-          for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
-            const previousDailyCash = computedDailyCashByDay.get(relevantDayKeys[previousIndex]) || 0;
-            if (previousDailyCash > 0) {
-              previousPositiveDailyCash = previousDailyCash;
-              break;
-            }
-          }
-
-          const movementForDay = dailyCashMovementByDay.get(dayKey) || 0;
-          computedDailyCashByDay.set(dayKey, previousPositiveDailyCash + movementForDay);
-        });
-
-        const dailyCash = todayKey ? computedDailyCashByDay.get(todayKey) || 0 : 0;
 
         /* ================= EXPENSES ================= */
         const currentMonthExpenses = expenses.filter((expense) => {

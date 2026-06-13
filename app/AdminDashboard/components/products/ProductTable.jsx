@@ -1,7 +1,7 @@
 "use client";
 
 import { Noto_Nastaliq_Urdu } from "next/font/google";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Pen, Package, Trash2 } from "lucide-react";
 import { blockedButtonClass, blockedButtonProps } from "../../authservice/permissions";
 import { formatDateDDMMYYYY } from "../../utils/formatting";
@@ -16,10 +16,7 @@ const urduNameStyle = {
 };
 
 const ProductTable = ({ products = [], onEdit, onDelete, canEdit = true, canDelete = true }) => {
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageInput, setPageInput] = useState("1");
   const [sortConfig, setSortConfig] = useState({ key: "name", direction: "asc" });
-  const [rowsPerPage, setRowsPerPage] = useState("20");
 
   const today = new Date();
 
@@ -150,27 +147,6 @@ const ProductTable = ({ products = [], onEdit, onDelete, canEdit = true, canDele
     return sorted;
   }, [displayedProducts, sortConfig]);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [sortConfig.key, sortConfig.direction, rowsPerPage]);
-
-  const isAllRows = rowsPerPage === "all";
-  const effectiveRowsPerPage = isAllRows ? sortedProducts.length || 1 : Number(rowsPerPage);
-  const totalPages = isAllRows ? 1 : Math.max(1, Math.ceil(sortedProducts.length / effectiveRowsPerPage));
-
-  useEffect(() => {
-    setCurrentPage((prev) => Math.min(prev, totalPages));
-  }, [totalPages]);
-
-  useEffect(() => {
-    setPageInput(String(currentPage));
-  }, [currentPage]);
-
-  const paginatedProducts = sortedProducts.slice(
-    (currentPage - 1) * effectiveRowsPerPage,
-    currentPage * effectiveRowsPerPage
-  );
-
   const handleSort = (key) => {
     setSortConfig((prev) => {
       if (prev.key === key) {
@@ -178,30 +154,6 @@ const ProductTable = ({ products = [], onEdit, onDelete, canEdit = true, canDele
       }
       return { key, direction: "asc" };
     });
-  };
-
-  const goToPage = (page) => {
-    const target = Math.min(totalPages, Math.max(1, Number(page) || 1));
-    setCurrentPage(target);
-  };
-
-  const handlePageInputChange = (e) => {
-    const value = e.target.value;
-    setPageInput(value);
-
-    const parsed = Number(value);
-    if (Number.isInteger(parsed)) {
-      goToPage(parsed);
-    }
-  };
-
-  const commitPageInput = () => {
-    const parsed = Number(pageInput);
-    if (!Number.isInteger(parsed)) {
-      setPageInput(String(currentPage));
-      return;
-    }
-    goToPage(parsed);
   };
 
   const sortIndicator = (key) => {
@@ -230,7 +182,7 @@ const ProductTable = ({ products = [], onEdit, onDelete, canEdit = true, canDele
           </thead>
 
           <tbody>
-            {paginatedProducts.length === 0 ? (
+            {sortedProducts.length === 0 ? (
               <tr>
                 <td colSpan={11}>
                   <div className="py-12 text-center text-slate-500">
@@ -240,7 +192,7 @@ const ProductTable = ({ products = [], onEdit, onDelete, canEdit = true, canDele
                 </td>
               </tr>
             ) : (
-              paginatedProducts.map((p) => {
+              sortedProducts.map((p) => {
                 const monthsLeft = getMonthsLeft(p.exp);
                 const expiryClass = monthsLeft !== null && monthsLeft <= 1 ? "text-red-600 font-bold" : "";
 
@@ -317,60 +269,6 @@ const ProductTable = ({ products = [], onEdit, onDelete, canEdit = true, canDele
         </table>
       </div>
 
-      {sortedProducts.length > 0 && (
-        <div className="flex items-center justify-between gap-2 border-t border-slate-200 p-3">
-          <div className="flex items-center gap-2">
-            <label htmlFor="rows-per-page" className="text-xs font-semibold text-slate-600">
-              No. of Rows
-            </label>
-            <select
-              id="rows-per-page"
-              value={rowsPerPage}
-              onChange={(e) => setRowsPerPage(e.target.value)}
-              className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-500"
-            >
-              <option value="20">20</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-              <option value="150">150</option>
-              <option value="200">200</option>
-              <option value="all">All</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-          <button
-            onClick={() => goToPage(currentPage - 1)}
-            disabled={currentPage === 1}
-            className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Prev
-          </button>
-          <span className="text-xs font-semibold text-slate-600">Page</span>
-          <input
-            type="number"
-            min={1}
-            max={totalPages}
-            value={pageInput}
-            onChange={handlePageInputChange}
-            onBlur={commitPageInput}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                commitPageInput();
-              }
-            }}
-            className="h-9 w-16 rounded-lg border border-slate-300 bg-white px-2 text-center text-xs font-semibold text-slate-700 outline-none focus:border-sky-500"
-          />
-          <span className="text-xs font-semibold text-slate-600">/ {totalPages}</span>
-          <button
-            onClick={() => goToPage(currentPage + 1)}
-            disabled={currentPage === totalPages}
-            className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Next
-          </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

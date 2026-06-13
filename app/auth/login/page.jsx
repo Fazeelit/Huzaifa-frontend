@@ -18,6 +18,7 @@ import {
 } from "../../AdminDashboard/authservice/authStorage";
 import { getFirstAllowedRoute } from "../../AdminDashboard/authservice/navigation";
 import { readStoredAuth } from "../../AdminDashboard/authservice/auth";
+import { normalizePermissionsForRole } from "../../AdminDashboard/authservice/permissions";
 import {
   FaUserCog,
   FaEnvelope,
@@ -150,7 +151,7 @@ export default function LoginPage() {
       return;
     }
 
-    const normalizedPermissions = Array.isArray(permissions) ? permissions : [];
+    const normalizedPermissions = normalizePermissionsForRole(permissions, role);
     const permissionPriority =
       ROLE_PERMISSION_PRIORITY[String(role || "").toUpperCase()] ||
       PERMISSION_PRIORITY;
@@ -238,12 +239,17 @@ export default function LoginPage() {
       clearPersistedAuth();
       clearCrudLocalData();
 
+      const normalizedPermissions = normalizePermissionsForRole(
+        user.permissions || [],
+        user.role
+      );
+
       /* ===== SAVE AUTH (BACKEND IS SOURCE OF TRUTH) ===== */
       persistAuthState({
         token,
         user,
         role: user.role,
-        permissions: user.permissions || [],
+        permissions: normalizedPermissions,
       });
       setAuthCookies(user.role);
 
@@ -251,7 +257,7 @@ export default function LoginPage() {
       setShowSuccess(true);
 
       /* ===== SAFE REDIRECT ===== */
-      const permissions = user.permissions || [];
+      const permissions = normalizedPermissions;
       const permissionPriority =
         ROLE_PERMISSION_PRIORITY[String(user.role || "").toUpperCase()] ||
         PERMISSION_PRIORITY;

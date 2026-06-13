@@ -7,6 +7,7 @@ import { apiRequest } from "../../authservice/api";
 import { hasPermission, parseStoredPermissions } from "../../authservice/permissions";
 import { Eye, EyeOff } from "lucide-react";
 import {
+  computeDailyCashSnapshot,
   getSupplierPaymentDateValue,
   getSupplierPaymentsArray,
   getTotalSupplierPaidAmount,
@@ -226,8 +227,15 @@ const CashReportSection = () => {
       purchases,
     });
     const totalExpenses = expensesInRange.reduce((sum, expense) => sum + expense.amountValue, 0);
-    const dailyCash =
-      totalWalkInSales + totalCustomerPaid - totalSupplierPaid - totalExpenses;
+    const { dailyCash } = computeDailyCashSnapshot({
+      sales,
+      expenses,
+      customers,
+      suppliers,
+      purchases,
+      supplierPayments,
+      targetDate: new Date(),
+    });
 
     return {
       salesInRange,
@@ -411,7 +419,7 @@ const CashReportSection = () => {
             Daily Cash: PKR {netCash.toFixed(2)}
           </p>
           <p className="text-xs text-gray-500">
-            Formula: previous positive daily cash + walk-in sale + customer paid - supplier paid - expense
+            Formula: previous positive daily cash + today total sales - today supplier paid - today expense
           </p>
         </div>
 
@@ -506,7 +514,7 @@ const CashReportSection = () => {
             {showValues ? `PKR ${netCash.toFixed(2)}` : "PKR ****"}
           </p>
           <p className="mt-1 text-xs text-sky-700">
-            Previous positive daily cash + walk-in sale + customer paid - supplier paid - expense
+            Matches dashboard daily cash for this year, reset every January 1
           </p>
         </div>
       </div>

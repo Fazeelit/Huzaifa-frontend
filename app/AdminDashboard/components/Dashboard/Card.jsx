@@ -334,7 +334,7 @@ const Cards = () => {
           0
         );
 
-        const { yearlyDailyCash } = computeDailyCashSnapshot({
+        const { dailyCash } = computeDailyCashSnapshot({
           sales,
           expenses,
           customers,
@@ -357,41 +357,46 @@ const Cards = () => {
           )
         );
 
+        const isFirstDayOfMonth = today.getDate() === 1;
+
         const currentMonthSales = sales.filter((sale) =>
           isDateInRange(
-            sale.createdAt || sale.saleDate,
+            sale.saleDate || sale.createdAt,
             currentMonthStart,
             nextMonthStart
           )
         );
 
-        const monthlySalesAmount = currentMonthSales.reduce(
-          (sum, sale) => sum + Number(sale?.totalAmount || 0),
-          0
-        );
+        const monthlySalesAmount = isFirstDayOfMonth
+          ? 0
+          : currentMonthSales.reduce((sum, sale) => sum + getSaleTotal(sale), 0);
 
-        const monthlyProfit = currentMonthSales
-          .reduce((sum, sale) => sum + calculateSalesPageProfit(sale), 0);
+        const monthlyProfit = isFirstDayOfMonth
+          ? 0
+          : currentMonthSales.reduce((sum, sale) => sum + calculateSalesPageProfit(sale), 0);
 
         /* ================= EXPENSES ================= */
-        const currentYearExpenses = expenses.filter((expense) => {
+        const currentMonthExpenses = expenses.filter((expense) => {
           return isDateInRange(
             expense.date || expense.createdAt,
-            currentYearStart,
-            nextYearStart
+            currentMonthStart,
+            nextMonthStart
           );
         });
 
-        const totalExpenses = currentYearExpenses.reduce(
-          (sum, e) => sum + getExpenseAmount(e),
-          0
-        );
+        const totalExpenses = isFirstDayOfMonth
+          ? 0
+          : currentMonthExpenses.reduce((sum, e) => sum + getExpenseAmount(e), 0);
 
-        const pendingPayments = currentYearExpenses
+        const pendingPayments = isFirstDayOfMonth
+          ? 0
+          : currentMonthExpenses
           .filter((e) => String(e.paymentStatus || "").toLowerCase() === "pending")
           .reduce((sum, e) => sum + getExpenseAmount(e), 0);
 
-        const completedPayments = currentYearExpenses
+        const completedPayments = isFirstDayOfMonth
+          ? 0
+          : currentMonthExpenses
           .filter((e) =>
             ["completed", "paid"].includes(
               String(e.paymentStatus || "").toLowerCase()
@@ -404,18 +409,17 @@ const Cards = () => {
           (p) => p.stock < 5
         ).length;
 
-        const currentYearPurchases = purchases.filter((purchase) => {
+        const currentMonthPurchases = purchases.filter((purchase) => {
           return isDateInRange(
             purchase.purchaseDate || purchase.date || purchase.createdAt,
-            currentYearStart,
-            nextYearStart
+            currentMonthStart,
+            nextMonthStart
           );
         });
 
-        const totalProductPurchase = currentYearPurchases.reduce(
-          (sum, p) => sum + getPurchaseAmount(p),
-          0
-        );
+        const totalProductPurchase = isFirstDayOfMonth
+          ? 0
+          : currentMonthPurchases.reduce((sum, p) => sum + getPurchaseAmount(p), 0);
 
         /* ================= DASHBOARD CARDS ================= */
         setCards([
@@ -428,7 +432,7 @@ const Cards = () => {
           },
           {
             title: "Daily Cash",
-            value: `Rs.${yearlyDailyCash.toFixed(2)}`,
+            value: `Rs.${dailyCash.toFixed(2)}`,
             subtitle: "Daily cash balance for this year, reset every January 1",
             icon: <Wallet className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-teal-500 to-emerald-600",
@@ -464,14 +468,14 @@ const Cards = () => {
           {
             title: "Total Product Purchase",
             value: `Rs.${totalProductPurchase.toFixed(2)}`,
-            subtitle: "Current monthly purchases, reset on January 1",
+            subtitle: "Current month product purchases from day 1 to month end, reset on next month 1st",
             icon: <Package className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-cyan-500 to-blue-600",
           },          
           {
             title: "Monthly Sales",
             value: `Rs.${monthlySalesAmount.toFixed(2)}`,
-            subtitle: "Current month sales amount, reset on next month 1st",
+            subtitle: "Current month sales amount from day 1 to month end, reset on next month 1st",
             icon: <Receipt className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-rose-500 to-red-600",
           },
@@ -480,7 +484,7 @@ const Cards = () => {
             value: `Rs.${totalExpenses.toFixed(2)}`,
             subtitle: `Pending: Rs.${pendingPayments.toFixed(
               2
-            )} | Completed: Rs.${completedPayments.toFixed(2)} | Reset on January 1`,
+            )} | Completed: Rs.${completedPayments.toFixed(2)} | Reset on next month 1st`,
             icon: <Activity className="w-7 h-7 text-white" />,
             iconBg: "bg-gradient-to-br from-slate-500 to-slate-700",
           },

@@ -15,6 +15,7 @@ import {
   BarChart3,
   UserCog,
   ShieldCheck,
+  Truck,
   Layers,
 } from "lucide-react";
 import Sidebar from "./Sidebar";
@@ -69,6 +70,11 @@ const ROUTES = {
     icon: PackagePlus,
     moduleKey: "PURCHASE",
   },
+  "/AdminDashboard/outdoor-supply": {
+      title: "Outdoor Supply",
+      icon: Truck,
+      moduleKey: "PURCHASE",
+    },
   "/AdminDashboard/suppliers": {
     title: "Suppliers",
     icon: Layers,

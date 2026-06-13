@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Layers,
   LogOut,
+  Truck,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -111,7 +112,7 @@ export default function Sidebar({ isOpen, toggleSidebar, isCollapsed = false }) 
     { name: "Purchases", icon: PackagePlus, path: "/AdminDashboard/purchases", moduleKey: "PURCHASE" },
     { name: "Suppliers", icon: Layers, path: "/AdminDashboard/suppliers", moduleKey: "SUPPLIER" },
     { name: "Sales", icon: Receipt, path: "/AdminDashboard/sales", moduleKey: "SALE" },
-    { name: "Expenses", icon: Wallet, path: "/AdminDashboard/expenses", moduleKey: "EXPENSE" },
+    { name: "Outdoor Supply", icon: Truck, path: "/AdminDashboard/outdoor-supply", moduleKey: "PURCHASE" },    { name: "Expenses", icon: Wallet, path: "/AdminDashboard/expenses", moduleKey: "EXPENSE" },
     { name: "Reports", icon: BarChart3, path: "/AdminDashboard/reports", permission: "REPORT_VIEW" },
     { name: "Users", icon: UserCog, path: "/AdminDashboard/users", moduleKey: "USER" },
     { name: "Roles", icon: ShieldCheck, path: "/AdminDashboard/roles", moduleKey: "ROLE" },

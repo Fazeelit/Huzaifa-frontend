@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Calendar,
   CreditCard,
+  Edit3,
   FileText,
   IdCard,
   Mail,
@@ -13,6 +14,7 @@ import {
   Package,
   Phone,
   Printer,
+  Trash2,
   User,
   Wallet,
 } from "lucide-react";
@@ -89,6 +91,40 @@ const getTransactionSortValue = (timestamp, fallbackDate = "") => {
   const first = new Date(timestamp || fallbackDate);
   if (!Number.isNaN(first.getTime())) return first.getTime();
   return 0;
+};
+
+const getSalePaymentStatus = (paidAmount, totalAmount) => {
+  const paid = Number(paidAmount || 0);
+  const total = Number(totalAmount || 0);
+  if (paid <= 0) return "Pending";
+  if (total > 0 && paid >= total) return "Paid";
+  return "Partial";
+};
+
+const formatStatusLabel = (value, fallback = "Pending") => {
+  const normalized = String(value || fallback).trim();
+  if (!normalized) return fallback;
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
+};
+
+const getStatusBadgeClassName = (status) => {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "paid" || normalized === "received") {
+    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300";
+  }
+  if (normalized === "partial") {
+    return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
+  }
+  return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+};
+
+const stripSaleMetaFields = (sale) => {
+  const requestBody = { ...sale };
+  delete requestBody._id;
+  delete requestBody.createdAt;
+  delete requestBody.updatedAt;
+  delete requestBody.__v;
+  return requestBody;
 };
 
 const getEntityTimestamp = (entry) => {
@@ -224,7 +260,15 @@ export default function CustomerDetailPage() {
   const [transactionPage, setTransactionPage] = useState(1);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
+  const [blankBillDebit, setBlankBillDebit] = useState(0);
+  const [blankBillDebitDraft, setBlankBillDebitDraft] = useState("0");
+  const [showBlankBillModal, setShowBlankBillModal] = useState(false);
+  const [editTransactionTarget, setEditTransactionTarget] = useState(null);
+  const [isSavingEditedPayment, setIsSavingEditedPayment] = useState(false);
+  const [deleteTransactionTarget, setDeleteTransactionTarget] = useState(null);
+  const [isDeletingTransaction, setIsDeletingTransaction] = useState(false);
   const [canEditCustomer, setCanEditCustomer] = useState(false);
+  const [canDeleteSale, setCanDeleteSale] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
     method: "Cash",
     reference: "",
@@ -271,6 +315,7 @@ export default function CustomerDetailPage() {
   useEffect(() => {
     const { permissions } = readStoredAuth();
     setCanEditCustomer(hasPermission(permissions, "CUSTOMER_EDIT"));
+    setCanDeleteSale(hasPermission(permissions, "SALE_DELETE"));
   }, []);
 
   useEffect(() => {
@@ -379,6 +424,7 @@ export default function CustomerDetailPage() {
 
       return {
         id: String(sale?.invoiceNo || sale?._id || `SALE-${index + 1}`),
+        saleId: String(sale?._id || ""),
         date: sale?.saleDate || sale?.createdAt || "",
         description: description || "N/A",
         amount: formatRs(totalAmount),
@@ -400,6 +446,9 @@ export default function CustomerDetailPage() {
     });
   })();
 
+  const totalBillAmount = displayBills.reduce((sum, bill) => sum + bill.amountNumber, 0);
+  const totalOutstandingAmount = displayBills.reduce((sum, bill) => sum + bill.remainingAmountNumber, 0);
+
   const paymentHistoryToShow = (Array.isArray(customer?.paymentHistory) ? customer.paymentHistory : []).map(
     (payment, index) => ({
       ...payment,
@@ -410,6 +459,7 @@ export default function CustomerDetailPage() {
       method: payment?.method || "N/A",
       reference: payment?.reference || "",
       billId: payment?.billId || "",
+      notes: payment?.notes || "",
       transactionTimestamp: payment?.updatedAt || payment?.date || customer?.updatedAt || "",
       source: "payment",
     })
@@ -423,32 +473,43 @@ export default function CustomerDetailPage() {
     reference: bill.reference,
     particulars: bill.description,
     debit: bill.amountNumber,
-    credit: 0,
-    savedOrder: index,
-  })), ...paymentHistoryToShow.map((payment, index) => ({
-    id: `payment-${payment.id}-${index}`,
-    type: "payment",
-    date: payment.date,
-    transactionTimestamp: payment.transactionTimestamp,
-    reference: payment.billId || payment.reference || payment.id,
-    particulars: payment.notes || "N/A",
-    debit: 0,
-    credit: payment.amountNumber,
-    savedOrder: displayBills.length + index,
+        credit: 0,
+        savedOrder: index,
+        status: formatStatusLabel(bill.status, "Pending"),
+      })), ...paymentHistoryToShow.map((payment, index) => ({
+        id: `payment-${payment.id}-${index}`,
+        paymentId: String(payment?.id || ""),
+        type: "payment",
+        date: payment.date,
+        transactionTimestamp: payment.transactionTimestamp,
+        reference: payment.billId || payment.reference || payment.id,
+        billId: payment.billId || "",
+        paymentReference: payment.reference || "",
+        particulars: payment.notes || "N/A",
+        debit: 0,
+        credit: payment.amountNumber,
+        savedOrder: displayBills.length + index,
+        status: "Received",
+        method: payment.method,
+        notes: payment.notes || "",
   }))].sort((a, b) => {
-    const diff =
+    const dateDiff = (getNormalizedDateValue(b.date) ?? 0) - (getNormalizedDateValue(a.date) ?? 0);
+    if (dateDiff !== 0) return dateDiff;
+    const timestampDiff =
       getTransactionSortValue(b.transactionTimestamp, b.date) -
       getTransactionSortValue(a.transactionTimestamp, a.date);
-    if (diff !== 0) return diff;
+    if (timestampDiff !== 0) return timestampDiff;
     return b.savedOrder - a.savedOrder;
   });
 
   let runningBalance = 0;
   const chronologicalTransactions = [...transactionFeed].sort((a, b) => {
-    const diff =
+    const dateDiff = (getNormalizedDateValue(a.date) ?? 0) - (getNormalizedDateValue(b.date) ?? 0);
+    if (dateDiff !== 0) return dateDiff;
+    const timestampDiff =
       getTransactionSortValue(a.transactionTimestamp, a.date) -
       getTransactionSortValue(b.transactionTimestamp, b.date);
-    if (diff !== 0) return diff;
+    if (timestampDiff !== 0) return timestampDiff;
     return a.savedOrder - b.savedOrder;
   });
 
@@ -459,10 +520,12 @@ export default function CustomerDetailPage() {
       balance: runningBalance,
     };
   }).sort((a, b) => {
-    const diff =
+    const dateDiff = (getNormalizedDateValue(b.date) ?? 0) - (getNormalizedDateValue(a.date) ?? 0);
+    if (dateDiff !== 0) return dateDiff;
+    const timestampDiff =
       getTransactionSortValue(b.transactionTimestamp, b.date) -
       getTransactionSortValue(a.transactionTimestamp, a.date);
-    if (diff !== 0) return diff;
+    if (timestampDiff !== 0) return timestampDiff;
     return b.savedOrder - a.savedOrder;
   });
 
@@ -476,15 +539,30 @@ export default function CustomerDetailPage() {
     return true;
   });
 
-  const totalTransactionPages = Math.max(1, Math.ceil(filteredTransactions.length / transactionsPerPage));
+  const adjustedFilteredTransactions = filteredTransactions.map((entry) => ({
+    ...entry,
+    balance: Math.max(0, Number(entry.balance || 0) + Number(blankBillDebit || 0)),
+  }));
+  const blankBillRow = {
+    id: "blank-bill-row",
+    type: "remaining bill",
+    date: "",
+    reference: "",
+    particulars: "remaining bill",
+    status: Number(blankBillDebit || 0) > 0 ? "Adjusted" : "Pending",
+    debit: Number(blankBillDebit || 0),
+    credit: 0,
+    balance: Number(blankBillDebit || 0),
+    isBlankBillRow: true,
+  };
+  const displayTransactions = [...adjustedFilteredTransactions, blankBillRow];
+
+  const totalTransactionPages = Math.max(1, Math.ceil(displayTransactions.length / transactionsPerPage));
   const safeTransactionPage = Math.min(transactionPage, totalTransactionPages);
-  const paginatedTransactions = filteredTransactions.slice(
+  const paginatedTransactions = displayTransactions.slice(
     (safeTransactionPage - 1) * transactionsPerPage,
     safeTransactionPage * transactionsPerPage
   );
-
-  const totalBillAmount = displayBills.reduce((sum, bill) => sum + bill.amountNumber, 0);
-  const totalOutstandingAmount = displayBills.reduce((sum, bill) => sum + bill.remainingAmountNumber, 0);
 
   const purchasedProducts = customerSales.flatMap((sale, saleIndex) =>
     (Array.isArray(sale?.items) ? sale.items : Array.isArray(sale?.products) ? sale.products : []).map((item, itemIndex) => ({
@@ -530,7 +608,344 @@ export default function CustomerDetailPage() {
     return false;
   };
 
+  const buildPersistableBills = () =>
+    displayBills
+      .map((bill) => ({
+        id: String(bill.id || ""),
+        date: bill.date || "",
+        description: bill.description || "",
+        amount: bill.amount,
+        paidAmount: bill.paidAmount,
+        status: bill.status,
+        dueDate: bill.dueDate || "",
+        notes: "",
+      }))
+      .map((bill) => ({ ...bill }));
+
+  const getBillReferenceValue = (billLike = {}) =>
+    String(
+      billLike?.reference ||
+      billLike?.id ||
+      billLike?.billId ||
+      billLike?.invoiceNo ||
+      billLike?.invoiceNumber ||
+      ""
+    );
+
+  const removeFirstMatchingPayment = (payments, matcher) => {
+    let removed = false;
+    return payments.filter((payment, index) => {
+      if (removed || !matcher(payment, index)) return true;
+      removed = true;
+      return false;
+    });
+  };
+
+  const isPaymentEntryMatch = (payment, entry) => {
+    if (entry?.paymentId && String(payment?.id || "") === String(entry.paymentId)) {
+      return true;
+    }
+
+    const paymentAmount = parseAmount(payment?.amount);
+    const entryAmount = Number(entry?.credit || 0);
+    const sameAmount = paymentAmount === entryAmount;
+    const sameDate = String(payment?.date || "") === String(entry?.date || "");
+    const sameReference = String(payment?.reference || "") === String(entry?.reference || "");
+    const sameBillId = String(payment?.billId || "") === String(entry?.reference || "");
+    const sameMethod = String(payment?.method || "") === String(entry?.method || "");
+
+    return sameAmount && sameDate && (sameReference || sameBillId || sameMethod);
+  };
+
+  const requestEditTransaction = (entry) => {
+    if (entry?.type !== "payment") return;
+    if (!canEditCustomer) {
+      alert("You do not have permission to edit this payment.");
+      return;
+    }
+
+    const linkedBill =
+      displayBills.find((bill) => String(bill?.id || "") === String(entry?.billId || entry?.reference || "")) || null;
+
+    setEditTransactionTarget({
+      ...entry,
+      linkedBillRemaining: Number(linkedBill?.remainingAmountNumber || 0),
+      linkedBillAmount: Number(linkedBill?.amountNumber || 0),
+    });
+    setPaymentForm({
+      method: entry.method || "Cash",
+      reference: getBillReferenceValue(linkedBill || entry),
+      date: entry.date || new Date().toISOString().split("T")[0],
+      partialAmount: String(Number(entry.credit || 0)),
+    });
+  };
+
+  const requestEditBlankBill = () => {
+    setBlankBillDebitDraft(String(Number(blankBillDebit || 0)));
+    setShowBlankBillModal(true);
+  };
+
+  const handleSaveBlankBillCredit = (event) => {
+    event.preventDefault();
+    const nextDebit = Number(blankBillDebitDraft || 0);
+    if (Number.isNaN(nextDebit) || nextDebit < 0) {
+      alert("Debit amount must be 0 or greater.");
+      return;
+    }
+
+    setBlankBillDebit(nextDebit);
+    setShowBlankBillModal(false);
+  };
+
+  const handleEditPaymentTransaction = async (event) => {
+    event.preventDefault();
+    if (!customer || !editTransactionTarget) return;
+
+    const nextAmount = Number(paymentForm.partialAmount || 0);
+    const previousAmount = Number(editTransactionTarget.credit || 0);
+    const maxAllowedAmount = previousAmount + Number(editTransactionTarget.linkedBillRemaining || 0);
+
+    if (!nextAmount || nextAmount <= 0 || nextAmount > maxAllowedAmount) {
+      alert(`Payment amount must be > 0 and <= ${maxAllowedAmount}.`);
+      return;
+    }
+
+    setIsSavingEditedPayment(true);
+
+    const currentBills = buildPersistableBills();
+    const currentPayments = Array.isArray(customer.paymentHistory) ? [...customer.paymentHistory] : [];
+    const paymentIndex = currentPayments.findIndex((payment) => isPaymentEntryMatch(payment, editTransactionTarget));
+
+    if (paymentIndex < 0) {
+      alert("Payment record not found.");
+      setIsSavingEditedPayment(false);
+      return;
+    }
+
+    const nextPayments = [...currentPayments];
+    const billReference = getBillReferenceValue(
+      currentBills.find(
+        (bill) => String(bill?.id || "") === String(editTransactionTarget.billId || editTransactionTarget.reference || "")
+      ) || editTransactionTarget
+    );
+    nextPayments[paymentIndex] = {
+      ...nextPayments[paymentIndex],
+      amount: formatRs(nextAmount),
+      method: paymentForm.method,
+      reference: billReference,
+      date: paymentForm.date,
+      billId: billReference,
+      notes: editTransactionTarget.notes || "",
+    };
+
+    const billId = String(editTransactionTarget.billId || editTransactionTarget.reference || "");
+    const targetBillIndex = currentBills.findIndex((bill) => String(bill?.id || "") === billId);
+
+    if (targetBillIndex >= 0) {
+      const existingPaid = parseAmount(currentBills[targetBillIndex]?.paidAmount);
+      const billAmount = parseAmount(currentBills[targetBillIndex]?.amount);
+      const nextPaid = Math.max(existingPaid - previousAmount + nextAmount, 0);
+      currentBills[targetBillIndex] = {
+        ...currentBills[targetBillIndex],
+        paidAmount: formatRs(nextPaid),
+        status: nextPaid <= 0 ? "pending" : nextPaid >= billAmount ? "paid" : "partial",
+      };
+    }
+
+    const linkedSale = findLinkedSale(editTransactionTarget);
+    if (linkedSale?._id) {
+      const salePaymentHistory = Array.isArray(linkedSale.paymentHistory) ? [...linkedSale.paymentHistory] : [];
+      const salePaymentIndex = salePaymentHistory.findIndex((payment) => {
+        const sameAmount = parseAmount(payment?.amount) === previousAmount;
+        const sameDate = String(payment?.date || "") === String(editTransactionTarget?.date || "");
+        const sameMethod = String(payment?.method || "") === String(editTransactionTarget?.method || "");
+        return sameAmount && sameDate && sameMethod;
+      });
+
+      const nextSalePaymentHistory = [...salePaymentHistory];
+      if (salePaymentIndex >= 0) {
+        nextSalePaymentHistory[salePaymentIndex] = {
+          ...nextSalePaymentHistory[salePaymentIndex],
+          amount: nextAmount,
+          method: paymentForm.method,
+          date: paymentForm.date,
+        };
+      }
+
+      const nextPaidAmount = Math.max(Number(linkedSale?.paidAmount || 0) - previousAmount + nextAmount, 0);
+      const totalAmount = Number(linkedSale?.totalAmount || linkedSale?.total || 0);
+      const saleUpdateResponse = await apiRequest(`/sales/updateSale/${linkedSale._id}`, {
+        method: "PUT",
+        data: stripSaleMetaFields({
+          ...linkedSale,
+          paidAmount: nextPaidAmount,
+          cashReceived: nextPaidAmount,
+          paymentHistory: nextSalePaymentHistory,
+          paymentStatus: getSalePaymentStatus(nextPaidAmount, totalAmount),
+        }),
+      });
+
+      if (!saleUpdateResponse?.success) {
+        alert(saleUpdateResponse?.message || "Failed to update linked payment.");
+        setIsSavingEditedPayment(false);
+        return;
+      }
+    }
+
+    const saved = await persistCustomerLedger(currentBills, nextPayments);
+    if (!saved) {
+      alert("Failed to update payment.");
+      setIsSavingEditedPayment(false);
+      return;
+    }
+
+    await loadCustomerData({ silent: true });
+    setEditTransactionTarget(null);
+    setIsSavingEditedPayment(false);
+  };
+
+  const requestDeleteTransaction = (entry) => {
+    if (entry?.type !== "payment") return;
+    if (!canEditCustomer) {
+      alert("You do not have permission to delete this payment.");
+      return;
+    }
+    setDeleteTransactionTarget(entry);
+  };
+
+  const handleDeleteTransaction = async (entry = deleteTransactionTarget) => {
+    if (!customer) return;
+    if (!entry) return;
+    setIsDeletingTransaction(true);
+
+    if (entry.type === "bill") {
+      if (!canDeleteSale) {
+        alert("You do not have permission to delete this bill.");
+        setIsDeletingTransaction(false);
+        return;
+      }
+
+      const linkedSale = findLinkedSale(entry);
+      if (!linkedSale?._id) {
+        alert("Linked bill record not found.");
+        setIsDeletingTransaction(false);
+        return;
+      }
+
+      const confirmed = window.confirm(`Delete bill ${entry.reference || linkedSale.invoiceNo || ""}?`);
+      if (!confirmed) return;
+
+      const deleteResponse = await apiRequest(`/sales/deleteSale/${linkedSale._id}`, {
+        method: "DELETE",
+      });
+
+      if (!deleteResponse?.success) {
+        alert(deleteResponse?.message || "Failed to delete bill.");
+        setIsDeletingTransaction(false);
+        return;
+      }
+
+      const nextBills = buildPersistableBills().filter(
+        (bill) => String(bill.id || "") !== String(entry.reference || entry.id || "")
+      );
+      const nextPayments = (Array.isArray(customer.paymentHistory) ? customer.paymentHistory : []).filter((payment) => {
+        const paymentBillId = String(payment?.billId || "").trim();
+        if (!paymentBillId) return true;
+        return paymentBillId !== String(entry.reference || "").trim();
+      });
+
+      const saved = await persistCustomerLedger(nextBills, nextPayments);
+      if (!saved) {
+        alert("Bill deleted, but customer ledger cleanup failed. Please refresh and verify the remaining transactions.");
+      }
+      await loadCustomerData({ silent: true });
+      setDeleteTransactionTarget(null);
+      setIsDeletingTransaction(false);
+      return;
+    }
+
+    if (!canEditCustomer) {
+      alert("You do not have permission to delete this payment.");
+      setIsDeletingTransaction(false);
+      return;
+    }
+
+    const linkedSale = findLinkedSale(entry);
+    const currentBills = buildPersistableBills();
+    const currentPayments = Array.isArray(customer.paymentHistory) ? [...customer.paymentHistory] : [];
+    const nextPayments = removeFirstMatchingPayment(currentPayments, (payment) => isPaymentEntryMatch(payment, entry));
+
+    if (nextPayments.length === currentPayments.length) {
+      alert("Payment record not found.");
+      setIsDeletingTransaction(false);
+      return;
+    }
+
+    const targetBillIndex = currentBills.findIndex(
+      (bill) => String(bill?.id || "") === String(entry.reference || "")
+    );
+
+    if (targetBillIndex >= 0) {
+      const existingPaid = parseAmount(currentBills[targetBillIndex]?.paidAmount);
+      const billAmount = parseAmount(currentBills[targetBillIndex]?.amount);
+      const nextPaid = Math.max(existingPaid - Number(entry.credit || 0), 0);
+      currentBills[targetBillIndex] = {
+        ...currentBills[targetBillIndex],
+        paidAmount: formatRs(nextPaid),
+        status: nextPaid <= 0 ? "pending" : nextPaid >= billAmount ? "paid" : "partial",
+      };
+    }
+
+    if (linkedSale?._id) {
+      const salePaymentHistory = Array.isArray(linkedSale.paymentHistory) ? [...linkedSale.paymentHistory] : [];
+      const nextSalePaymentHistory = removeFirstMatchingPayment(salePaymentHistory, (payment) => {
+        const sameAmount = parseAmount(payment?.amount) === Number(entry.credit || 0);
+        const sameDate = String(payment?.date || "") === String(entry?.date || "");
+        const sameMethod = String(payment?.method || "") === String(entry?.method || "");
+        return sameAmount && sameDate && sameMethod;
+      });
+      const nextPaidAmount = Math.max(Number(linkedSale?.paidAmount || 0) - Number(entry.credit || 0), 0);
+      const totalAmount = Number(linkedSale?.totalAmount || linkedSale?.total || 0);
+      const saleUpdateResponse = await apiRequest(`/sales/updateSale/${linkedSale._id}`, {
+        method: "PUT",
+        data: stripSaleMetaFields({
+          ...linkedSale,
+          paidAmount: nextPaidAmount,
+          cashReceived: nextPaidAmount,
+          paymentHistory: nextSalePaymentHistory,
+          paymentStatus: getSalePaymentStatus(nextPaidAmount, totalAmount),
+        }),
+      });
+
+      if (!saleUpdateResponse?.success) {
+        alert(saleUpdateResponse?.message || "Failed to delete payment from linked bill.");
+        setIsDeletingTransaction(false);
+        return;
+      }
+    }
+
+    const saved = await persistCustomerLedger(currentBills, nextPayments);
+    if (!saved) {
+      alert("Failed to delete payment.");
+      setIsDeletingTransaction(false);
+      return;
+    }
+
+    await loadCustomerData({ silent: true });
+    setDeleteTransactionTarget(null);
+    setIsDeletingTransaction(false);
+  };
+
   const openPaymentModal = (bill = null) => {
+    const fallbackOutstandingBill =
+      [...displayBills]
+        .filter((entry) => Number(entry?.remainingAmountNumber || 0) > 0)
+        .sort(
+          (a, b) =>
+            getTransactionSortValue(a.transactionTimestamp, a.date) -
+            getTransactionSortValue(b.transactionTimestamp, b.date)
+        )[0] || null;
+
     if (!bill) {
       setSelectedBill({
         id: `TOTAL-${customer?.name || "CUSTOMER"}`,
@@ -544,10 +959,18 @@ export default function CustomerDetailPage() {
         paidAmount: formatRs(0),
         remainingAmount: formatRs(totalOutstandingAmount),
         source: "customer-total",
+        linkedInvoiceReference: getBillReferenceValue(fallbackOutstandingBill),
       });
     } else {
-      setSelectedBill(bill);
+      setSelectedBill({
+        ...bill,
+        linkedInvoiceReference: getBillReferenceValue(bill),
+      });
     }
+    setPaymentForm((prev) => ({
+      ...prev,
+      reference: getBillReferenceValue(bill || fallbackOutstandingBill),
+    }));
     setShowPaymentModal(true);
   };
 
@@ -635,8 +1058,8 @@ export default function CustomerDetailPage() {
           date: paymentDate,
           amount: formatRs(allocatedAmount),
           method: paymentForm.method,
-          reference: paymentForm.reference || "",
-          billId: String(currentBills[targetIndex]?.id || ""),
+          reference: getBillReferenceValue(currentBills[targetIndex]),
+          billId: getBillReferenceValue(currentBills[targetIndex]),
           notes: "",
         });
 
@@ -694,8 +1117,8 @@ export default function CustomerDetailPage() {
         date: paymentDate,
         amount: formatRs(paidAmount),
         method: paymentForm.method,
-        reference: paymentForm.reference || "",
-        billId: String(currentBills[targetIndex]?.id || ""),
+        reference: getBillReferenceValue(currentBills[targetIndex]),
+        billId: getBillReferenceValue(currentBills[targetIndex]),
         notes: "",
       });
     }
@@ -719,13 +1142,7 @@ export default function CustomerDetailPage() {
   const handlePrintTransactions = () => {
     if (typeof window === "undefined" || !customer) return;
 
-    const printTransactions = [...filteredTransactions].sort((a, b) => {
-      const diff =
-        getTransactionSortValue(a.transactionTimestamp, a.date) -
-        getTransactionSortValue(b.transactionTimestamp, b.date);
-      if (diff !== 0) return diff;
-      return a.savedOrder - b.savedOrder;
-    });
+    const printTransactions = [...adjustedFilteredTransactions, blankBillRow];
 
     const rows = printTransactions
       .map(
@@ -735,6 +1152,7 @@ export default function CustomerDetailPage() {
             <td>${entry.type}</td>
             <td>${entry.reference || "N/A"}</td>
             <td>${entry.particulars || "N/A"}</td>
+            <td>${entry.status || "N/A"}</td>
             <td>${formatRs(entry.debit)}</td>
             <td>${formatRs(entry.credit)}</td>
             <td>${formatRs(entry.balance)}</td>
@@ -774,6 +1192,7 @@ export default function CustomerDetailPage() {
                 <th>Type</th>
                 <th>Reference</th>
                 <th>Particulars</th>
+                <th>Status</th>
                 <th>Debit</th>
                 <th>Credit</th>
                 <th>Balance</th>
@@ -909,29 +1328,102 @@ export default function CustomerDetailPage() {
 
               <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-700">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[920px]">
+                  <table className="w-full min-w-[940px]">
                     <thead className="bg-gray-100 dark:bg-gray-700/60">
                       <tr>
-                        {["Date", "Type", "Reference", "Particulars", "Debit", "Credit", "Balance"].map((label) => (
-                          <th key={label} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300">{label}</th>
+                        {["Date", "Type", "Reference", "Particulars", "Status", "Debit", "Credit", "Balance", "Action"].map((label) => (
+                          <th
+                            key={label}
+                            className={`px-2.5 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300 ${
+                              label === "Date"
+                                ? "w-[90px] min-w-[90px]"
+                                : label === "Type"
+                                  ? "w-[85px] min-w-[85px]"
+                                  : label === "Reference"
+                                    ? "w-[95px] min-w-[95px]"
+                                    : label === "Particulars"
+                                      ? "w-[160px] min-w-[160px]"
+                                      : label === "Status"
+                                        ? "w-[85px] min-w-[85px]"
+                                        : label === "Debit" || label === "Credit" || label === "Balance"
+                                          ? "w-[90px] min-w-[90px]"
+                                          : label === "Action"
+                                            ? "w-[70px] min-w-[70px]"
+                                            : ""
+                            }`}
+                          >
+                            {label}
+                          </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                       {paginatedTransactions.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">No transactions found for the selected date range.</td>
+                          <td colSpan={9} className="px-2.5 py-8 text-center text-sm text-gray-500 dark:text-gray-400">No transactions found for the selected date range.</td>
                         </tr>
                       ) : (
                         paginatedTransactions.map((entry) => (
                           <tr key={entry.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                            <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{formatDate(entry.date)}</td>
-                            <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">{entry.type}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{entry.reference || "N/A"}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{entry.particulars || "N/A"}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{formatRs(entry.debit)}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{formatRs(entry.credit)}</td>
-                            <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">{formatRs(entry.balance)}</td>
+                            <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{formatDate(entry.date)}</td>
+                            <td className="px-2.5 py-2.5 text-sm font-medium text-gray-900 dark:text-white">{entry.type}</td>
+                            <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{entry.reference || "N/A"}</td>
+                            <td className="w-[160px] min-w-[160px] px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">
+                              <div
+                                className="overflow-hidden break-words"
+                                style={{
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: "vertical",
+                                }}
+                              >
+                                {entry.particulars || "N/A"}
+                              </div>
+                            </td>
+                            <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClassName(entry.status)}`}>
+                                {entry.status || "N/A"}
+                              </span>
+                            </td>
+                            <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{formatRs(entry.debit)}</td>
+                            <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{formatRs(entry.credit)}</td>
+                            <td className="px-2.5 py-2.5 text-sm font-medium text-gray-900 dark:text-white">{formatRs(entry.balance)}</td>
+                            <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">
+                              {entry.isBlankBillRow ? (
+                                <button
+                                  type="button"
+                                  onClick={requestEditBlankBill}
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-200 text-blue-600 transition hover:bg-blue-50 dark:border-blue-900/60 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                                  aria-label="Edit remaining bill credit"
+                                  title="Edit remaining bill"
+                                >
+                                  <Edit3 className="h-4 w-4" />
+                                </button>
+                              ) : entry.type === "payment" ? (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => requestEditTransaction(entry)}
+                                    disabled={!canEditCustomer}
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-200 text-blue-600 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/60 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                                    aria-label="Edit payment transaction"
+                                    title="Edit payment"
+                                  >
+                                    <Edit3 className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => requestDeleteTransaction(entry)}
+                                    disabled={!canEditCustomer}
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/30"
+                                    aria-label="Delete payment transaction"
+                                    title="Delete payment"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              ) : null}
+                            </td>
                           </tr>
                         ))
                       )}
@@ -941,7 +1433,7 @@ export default function CustomerDetailPage() {
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-gray-500 dark:text-gray-400">Showing {paginatedTransactions.length} of {filteredTransactions.length} transactions</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Showing {paginatedTransactions.length} of {displayTransactions.length} transactions</p>
                 <div className="flex items-center gap-3">
                   <button onClick={() => setTransactionPage((prev) => Math.max(1, prev - 1))} disabled={safeTransactionPage === 1} className="rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600">Prev</button>
                   <span className="text-sm text-gray-700 dark:text-gray-300">{safeTransactionPage} / {totalTransactionPages}</span>
@@ -1065,6 +1557,163 @@ export default function CustomerDetailPage() {
         </div>
       </div>
 
+      {showBlankBillModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl dark:bg-gray-800">
+            <div className="p-5">
+              <h3 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">Edit remaining bill</h3>
+              <form onSubmit={handleSaveBlankBillCredit} className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Debit Amount</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={blankBillDebitDraft}
+                    onChange={(e) => setBlankBillDebitDraft(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800"
+                  />
+                </div>
+                <div className="flex justify-end gap-3 border-t border-gray-200 pt-4 dark:border-gray-700">
+                  <button
+                    type="button"
+                    onClick={() => setShowBlankBillModal(false)}
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-600 dark:text-gray-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-gradient-to-r from-blue-600 to-emerald-500 px-4 py-2 text-sm font-medium text-white"
+                  >
+                    Save
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editTransactionTarget?.type === "payment" ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl dark:bg-gray-800">
+            <div className="p-5">
+              <h3 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">Edit Payment</h3>
+              <form onSubmit={handleEditPaymentTransaction} className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Bill ID</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={editTransactionTarget.billId || editTransactionTarget.reference || "N/A"}
+                    className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Edit Payment</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max={Number(editTransactionTarget.linkedBillRemaining || 0) + Number(editTransactionTarget.credit || 0)}
+                    value={paymentForm.partialAmount}
+                    onChange={(e) => setPaymentForm((prev) => ({ ...prev, partialAmount: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Reference No.</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={paymentForm.reference || editTransactionTarget.billId || editTransactionTarget.reference || "N/A"}
+                    className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Payment Method *</label>
+                  <select
+                    value={paymentForm.method}
+                    onChange={(e) => setPaymentForm((prev) => ({ ...prev, method: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800"
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Card">Card</option>
+                    <option value="Check">Check</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Date *</label>
+                  <input
+                    type="date"
+                    value={paymentForm.date}
+                    onChange={(e) => setPaymentForm((prev) => ({ ...prev, date: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800"
+                  />
+                </div>
+                <div className="flex justify-end gap-3 border-t border-gray-200 pt-4 dark:border-gray-700">
+                  <button
+                    type="button"
+                    onClick={() => setEditTransactionTarget(null)}
+                    disabled={isSavingEditedPayment}
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingEditedPayment}
+                    className="rounded-lg bg-gradient-to-r from-blue-600 to-emerald-500 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Save Payment
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteTransactionTarget?.type === "payment" ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl bg-gradient-to-br from-white to-gray-50 p-5 shadow-2xl dark:from-gray-800 dark:to-gray-700">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="rounded-lg bg-gradient-to-r from-red-100 to-pink-100 p-2 dark:from-red-900/30 dark:to-pink-900/30">
+                <Trash2 className="h-5 w-5 text-red-600 dark:text-red-400" />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Delete Payment?</h3>
+            </div>
+
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800/30 dark:bg-red-900/10">
+              <p className="text-sm text-gray-800 dark:text-gray-200">
+                Are you sure want to Delete payment{" "}
+                <span className="font-semibold">{deleteTransactionTarget.reference || deleteTransactionTarget.id || "N/A"}</span>
+                ? Yes/No
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setDeleteTransactionTarget(null)}
+                disabled={isDeletingTransaction}
+                className="rounded-lg bg-gradient-to-r from-gray-200 to-gray-300 px-4 py-2 text-sm font-medium text-gray-800 transition-all duration-200 hover:from-gray-300 hover:to-gray-400 disabled:cursor-not-allowed disabled:opacity-50 dark:from-gray-700 dark:to-gray-600 dark:text-gray-300 dark:hover:from-gray-600 dark:hover:to-gray-500"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteTransaction()}
+                disabled={isDeletingTransaction}
+                className="rounded-lg bg-gradient-to-r from-red-600 to-pink-600 px-4 py-2 text-sm font-medium text-white shadow-md transition-all duration-200 hover:from-red-700 hover:to-pink-700 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Yes
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {showPaymentModal && selectedBill && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl dark:bg-gray-800">
@@ -1095,7 +1744,12 @@ export default function CustomerDetailPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Reference No.</label>
-                  <input type="text" placeholder="Enter reference no." value={paymentForm.reference} onChange={(e) => setPaymentForm((prev) => ({ ...prev, reference: e.target.value }))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800" />
+                  <input
+                    type="text"
+                    readOnly
+                    value={paymentForm.reference || selectedBill.linkedInvoiceReference || selectedBill.reference || "N/A"}
+                    className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Payment Method *</label>

@@ -128,7 +128,7 @@ const PurchasesTable = ({
                   </td>
                   <td className="px-1.5 py-1.5">
                     <div className="flex items-center gap-1.5">
-                      {!p.isPartial && p.purchaseStatus !== "Completed" ? (
+                      {!p.isPartial ? (
                         <button
                           onClick={() => canEdit && handleEditPurchase(p)}
                           className={`h-8 w-8 inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 ${blockedButtonClass} blocked-action`}

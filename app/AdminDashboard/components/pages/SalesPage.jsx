@@ -116,6 +116,25 @@ const toNumber = (value) => {
   return match ? Number(match[0]) : 0;
 };
 
+const parseLocalDate = (value) => {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : new Date(value);
+  }
+
+  const normalized = String(value).trim();
+  const isoMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const [, yyyy, mm, dd] = isoMatch;
+    const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 const getCustomersArray = (response) => {
   if (Array.isArray(response?.customers)) return response.customers;
   if (Array.isArray(response?.data?.customers)) return response.data.customers;
@@ -274,16 +293,27 @@ const SalesPage = () => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      const last30Days = new Date(today);
-      last30Days.setDate(today.getDate() - 30);
+      const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+      const isFirstDayOfMonth = today.getDate() === 1;
 
       const todayProfit = enrichedSales
-        .filter((sale) => new Date(sale.createdAt || sale.saleDate) >= today)
+        .filter((sale) => {
+          const saleDate = parseLocalDate(sale.saleDate || sale.createdAt);
+          return Boolean(saleDate && saleDate >= today);
+        })
         .reduce((sum, sale) => sum + sale.profit, 0);
 
-      const monthlyProfit = enrichedSales
-        .filter((sale) => new Date(sale.createdAt || sale.saleDate) >= last30Days)
-        .reduce((sum, sale) => sum + sale.profit, 0);
+      const currentMonthSales = enrichedSales.filter((sale) => {
+        const saleDate = parseLocalDate(sale.saleDate || sale.createdAt);
+        return Boolean(
+          saleDate && saleDate >= currentMonthStart && saleDate < nextMonthStart
+        );
+      });
+
+      const monthlyProfit = isFirstDayOfMonth
+        ? 0
+        : currentMonthSales.reduce((sum, sale) => sum + sale.profit, 0);
 
       let data = enrichedSales;
 
@@ -324,14 +354,18 @@ const SalesPage = () => {
         prev.filter((id) => data.some((sale) => String(sale._id || sale.invoiceNumber || "") === id))
       );
 
-      const revenue = data.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
-      const profit = data.reduce((sum, item) => sum + Number(item.profit || 0), 0);
+      const totalRevenue = isFirstDayOfMonth
+        ? 0
+        : currentMonthSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+      const totalProfit = isFirstDayOfMonth
+        ? 0
+        : currentMonthSales.reduce((sum, sale) => sum + Number(sale.profit || 0), 0);
 
       setStats({
-        totalRevenue: revenue,
+        totalRevenue,
         totalSales: data.length,
-        avgTransaction: data.length ? revenue / data.length : 0,
-        totalProfit: profit,
+        avgTransaction: data.length ? totalRevenue / data.length : 0,
+        totalProfit,
         todayProfit,
         monthlyProfit,
       });

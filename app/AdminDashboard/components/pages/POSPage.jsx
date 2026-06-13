@@ -82,6 +82,35 @@ export default function POSPage() {
     };
   };
 
+  const updateLineAmount = (key, nextAmount) => {
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.key !== key) return item;
+
+        const trimmedAmount = String(nextAmount ?? "").trim();
+        if (!trimmedAmount) {
+          const { customUnitSalePrice, ...rest } = item;
+          return rest;
+        }
+
+        const numericAmount = Number(trimmedAmount);
+        if (!Number.isFinite(numericAmount) || numericAmount < 0) return item;
+
+        const displayQty = Math.max(Number(item.displayQty ?? item.qty ?? 0) || 0, 1);
+        const quantityMode = item?.quantityMode === "pack" ? "pack" : "unit";
+        const divisor =
+          quantityMode === "pack" ? displayQty * getPackSize(item) : displayQty;
+
+        if (!Number.isFinite(divisor) || divisor <= 0) return item;
+
+        return {
+          ...item,
+          customUnitSalePrice: Number((numericAmount / divisor).toFixed(2)),
+        };
+      })
+    );
+  };
+
   const fetchProducts = async () => {
     try {
       setLoading(true);
@@ -267,7 +296,7 @@ export default function POSPage() {
       </div>
 
       <section className="mx-auto max-w-7xl px-3 py-4 sm:px-4 sm:py-5 lg:px-6">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2.55fr)_minmax(250px,0.65fr)]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2.95fr)_minmax(220px,0.5fr)]">
           <div className="space-y-4">
             <div className="rounded-xl border border-white/70 bg-white/80 p-3 shadow-lg shadow-black/5 backdrop-blur sm:p-4">
               <ProductsCard
@@ -278,6 +307,7 @@ export default function POSPage() {
                 decreaseQty={decreaseQty}
                 updateQty={updateQty}
                 updateQuantityMode={updateQuantityMode}
+                updateLineAmount={updateLineAmount}
                 updateFreeQty={updateFreeQty}
                 removeItem={removeItem}
               />

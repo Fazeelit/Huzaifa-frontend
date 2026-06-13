@@ -113,12 +113,6 @@ export default function EditSupplierModal({
                   placeholder: "Enter contact person name",
                   type: "text",
                 },
-                {
-                  key: "taxId",
-                  label: "Tax ID",
-                  placeholder: "Enter tax identification number",
-                  type: "text",
-                },
               ].map((field) => (
                 <div key={field.key}>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -166,12 +160,6 @@ export default function EditSupplierModal({
                   placeholder: "0300-1234567",
                   pattern: "^\\d{4}-\\d{7}$",
                   title: "Use format 0300-1234567 (11 digits).",
-                },
-                {
-                  key: "website",
-                  label: "Website",
-                  type: "url",
-                  placeholder: "https://example.com",
                 },
               ].map((field) => (
                 <div key={field.key}>
@@ -277,20 +265,6 @@ export default function EditSupplierModal({
                 </label>
               </div>
             </div>
-          </div>
-
-          {/* Notes */}
-          <div className="mt-6">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Additional Notes
-            </label>
-            <textarea
-              value={form.notes || ""}
-              onChange={(e) => handleChange("notes", e.target.value)}
-              placeholder="Any additional information about this supplier..."
-              rows="2"
-              className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition"
-            />
           </div>
 
           <div className="mt-8 flex flex-col sm:flex-row justify-end gap-4 pt-6 border-t dark:border-gray-700">

@@ -50,6 +50,11 @@ const getPackSize = (item) => {
 };
 
 const getUnitSalePrice = (item) => {
+  const customUnitSalePrice = Number(item?.customUnitSalePrice);
+  if (Number.isFinite(customUnitSalePrice) && customUnitSalePrice >= 0) {
+    return Number(customUnitSalePrice.toFixed(2));
+  }
+
   const baseSalePrice = Number(item?.salePrice || item?.price || item?.purchasePrice || item?.cost) || 0;
   const maxAllowedDiscount = Number(item?.maxAllowedDiscount ?? 0) || 0;
   const discountedSalePrice = Number(
@@ -60,10 +65,18 @@ const getUnitSalePrice = (item) => {
 
 const getSelectedSalePrice = (item) => {
   const quantityMode = item?.quantityMode === "pack" ? "pack" : "unit";
+  const customUnitSalePrice = Number(item?.customUnitSalePrice);
+  const packSize = getPackSize(item);
+
+  if (Number.isFinite(customUnitSalePrice) && customUnitSalePrice >= 0) {
+    return quantityMode === "pack"
+      ? Number((customUnitSalePrice * packSize).toFixed(2))
+      : Number(customUnitSalePrice.toFixed(2));
+  }
+
   const wholeSalePrice = Number(item?.wholeSalePrice ?? item?.wholesalePrice ?? 0) || 0;
   const retailSalePrice = Number(item?.retailSalePrice ?? item?.salePrice ?? item?.price ?? item?.purchasePrice ?? item?.cost ?? 0) || 0;
   const maxAllowedDiscount = Number(item?.maxAllowedDiscount ?? 0) || 0;
-  const packSize = getPackSize(item);
   const discountedRetailSalePrice = Number(
     (retailSalePrice - (retailSalePrice * maxAllowedDiscount) / 100).toFixed(2)
   );

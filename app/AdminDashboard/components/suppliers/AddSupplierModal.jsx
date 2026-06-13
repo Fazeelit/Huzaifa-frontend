@@ -88,7 +88,6 @@ function AddSupplierModal({
                 { label: "Supplier Name *", value: newSupplier.name, onChange: (e) => setNewSupplier({...newSupplier, name: e.target.value}), placeholder: "Enter supplier name" },
                 { label: "Company Name", value: newSupplier.company, onChange: (e) => setNewSupplier({...newSupplier, company: e.target.value}), placeholder: "Enter company name" },
                 { label: "Contact Person *", value: newSupplier.contactPerson, onChange: (e) => setNewSupplier({...newSupplier, contactPerson: e.target.value}), placeholder: "Enter contact person name" },
-                { label: "Tax ID", value: newSupplier.taxId, onChange: (e) => setNewSupplier({...newSupplier, taxId: e.target.value}), placeholder: "Enter tax identification number" },
               ].map((field, idx) => (
                 <div key={idx}>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -119,7 +118,6 @@ function AddSupplierModal({
                 { key: "email", label: "Email *", value: newSupplier.email, onChange: (e) => setNewSupplier({...newSupplier, email: e.target.value}), placeholder: "example@gmail.com", type: "email", pattern: "^[a-zA-Z0-9._%+-]+@gmail\\.com$", title: "Use a valid Gmail address (example@gmail.com)." },
                 { key: "phone", label: "Phone *", value: newSupplier.phone, onChange: (e) => setNewSupplier({...newSupplier, phone: formatPhoneWithDash(e.target.value)}), placeholder: "0300-1234567", type: "tel", pattern: "^\\d{4}-\\d{7}$", title: "Use format 0300-1234567 (11 digits)." },
                 { key: "mobile", label: "Mobile", value: newSupplier.mobile, onChange: (e) => setNewSupplier({...newSupplier, mobile: formatPhoneWithDash(e.target.value)}), placeholder: "0300-1234567", type: "tel", pattern: "^\\d{4}-\\d{7}$", title: "Use format 0300-1234567 (11 digits)." },
-                { key: "website", label: "Website", value: newSupplier.website, onChange: (e) => setNewSupplier({...newSupplier, website: e.target.value}), placeholder: "https://example.com", type: "url" },
               ].map((field, idx) => (
                 <div key={idx}>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -227,20 +225,6 @@ function AddSupplierModal({
                 </label>
               </div>
             </div>
-          </div>
-
-          {/* Notes */}
-          <div className="mt-6">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Additional Notes
-            </label>
-            <textarea
-              value={newSupplier.notes}
-              onChange={(e) => setNewSupplier({...newSupplier, notes: e.target.value})}
-              placeholder="Any additional information about this supplier..."
-              rows="2"
-              className="w-full px-4 py-3 border border-gray-300/80 dark:border-gray-600 rounded-2xl bg-white/90 dark:bg-gray-800/80 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition"
-            />
           </div>
 
           {/* Action Buttons */}

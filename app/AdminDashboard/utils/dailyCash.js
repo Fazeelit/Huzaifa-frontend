@@ -268,12 +268,12 @@ export const computeDailyCashSnapshot = ({
       parsed && targetDay && parsed.toDateString() === targetDay.toDateString()
     );
   };
-  const isWithinTargetYearToDate = (value) => {
-    const parsed = parseLocalDate(value);
-    return Boolean(parsed && startOfTargetYear && targetDay && parsed >= startOfTargetYear && parsed <= targetDay);
-  };
 
   const todaysSales = sales.filter((sale) => isOnTargetDay(getSaleReportDateValue(sale)));
+  const todaysSalesTotal = todaysSales.reduce(
+    (sum, sale) => sum + getSaleTotal(sale),
+    0
+  );
   const todaysWalkInSales = todaysSales
     .filter((sale) => isWalkInSale(sale))
     .reduce((sum, sale) => sum + getSaleTotal(sale), 0);
@@ -302,35 +302,6 @@ export const computeDailyCashSnapshot = ({
     startDate: targetDay,
     endDate: targetDay,
   });
-  const totalSupplierPaid = getTotalSupplierPaidAmount({
-    suppliers,
-    purchases,
-  });
-
-  const yearToDateWalkInSales = sales
-    .filter(
-      (sale) =>
-        isWithinTargetYearToDate(getSaleReportDateValue(sale)) && isWalkInSale(sale)
-    )
-    .reduce((sum, sale) => sum + getSaleTotal(sale), 0);
-
-  const yearToDateCustomerPaid = customers.reduce(
-    (sum, customer) =>
-      sum +
-      getCustomerPaymentHistory(customer)
-        .filter(
-          (payment) =>
-            isWithinTargetYearToDate(
-              payment?.date || payment?.paymentDate || payment?.createdAt
-            ) && isCashPaymentMethod(payment?.method || payment?.paymentMethod)
-        )
-        .reduce((paymentSum, payment) => paymentSum + toNumber(payment?.amount), 0),
-    0
-  );
-
-  const yearToDateExpenses = expenses
-    .filter((expense) => isWithinTargetYearToDate(expense?.date || expense?.createdAt))
-    .reduce((sum, expense) => sum + toNumber(expense?.amount || expense?.totalamount), 0);
 
   const dailyCashMovementByDay = new Map();
   const addCashMovement = (date, amount) => {
@@ -344,18 +315,7 @@ export const computeDailyCashSnapshot = ({
   };
 
   sales.forEach((sale) => {
-    if (!isWalkInSale(sale)) return;
     addCashMovement(getSaleReportDateValue(sale), getSaleTotal(sale));
-  });
-
-  customers.forEach((customer) => {
-    getCustomerPaymentHistory(customer).forEach((payment) => {
-      if (!isCashPaymentMethod(payment?.method || payment?.paymentMethod)) return;
-      addCashMovement(
-        payment?.date || payment?.paymentDate || payment?.createdAt,
-        toNumber(payment?.amount)
-      );
-    });
   });
 
   getUnifiedSupplierPayments({
@@ -403,16 +363,16 @@ export const computeDailyCashSnapshot = ({
     computedDailyCashByDay.set(dayKey, previousPositiveDailyCash + movementForDay);
   });
 
+  const computedDailyCash =
+    targetDayKey ? computedDailyCashByDay.get(targetDayKey) || 0 : 0;
+
   return {
+    totalSales: todaysSalesTotal,
     totalWalkInSales: todaysWalkInSales,
     totalCustomerPaid: todaysCustomerPaid,
     totalSupplierPaid: todaysSupplierPaid,
     totalExpenses: todaysExpenses,
-    dailyCash: targetDayKey ? computedDailyCashByDay.get(targetDayKey) || 0 : 0,
-    yearlyDailyCash:
-      yearToDateWalkInSales +
-      yearToDateCustomerPaid -
-      totalSupplierPaid -
-      yearToDateExpenses,
+    dailyCash: computedDailyCash,
+    yearlyDailyCash: computedDailyCash,
   };
 };

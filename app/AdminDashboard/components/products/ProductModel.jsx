@@ -9,6 +9,7 @@ import { convertToBaseUnit } from "../../utils/uomConverter";
 const fieldClass =
   "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100";
 const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600";
+const normalizeProductKey = (value) => String(value || "").trim().toLowerCase();
 
 const ProductModal = ({ onClose }) => {
   const [invoiceNumber, setInvoiceNumber] = useState("");
@@ -60,7 +61,7 @@ const ProductModal = ({ onClose }) => {
   const productsByName = useMemo(() => {
     const map = new Map();
     for (const p of allProducts) {
-      const key = String(p?.name || "").trim().toLowerCase();
+      const key = normalizeProductKey(p?.name);
       if (key && !map.has(key)) map.set(key, p);
     }
     return map;
@@ -69,11 +70,13 @@ const ProductModal = ({ onClose }) => {
   const mergeBillItems = (purchase = {}) => {
     const purchaseItems = Array.isArray(purchase?.products) ? purchase.products : [];
     const purchaseDate = purchase?.purchaseDate || purchase?.date || "";
+    const isDraftPurchase =
+      String(purchase?.purchaseStatus || "").trim().toLowerCase() === "draft";
 
     return purchaseItems.map((item, index) => {
-      const nameKey = String(item?.name || "").trim().toLowerCase();
-      const masterByName = productsByName.get(nameKey);
+      const nameKey = normalizeProductKey(item?.name);
       const masterById = allProducts.find((p) => String(p?._id) === String(item?.productId || ""));
+      const masterByName = isDraftPurchase ? null : productsByName.get(nameKey);
       const masterProduct = masterById || masterByName || {};
 
       const purchaseQty = Number(item?.quantity || 0);
@@ -88,16 +91,18 @@ const ProductModal = ({ onClose }) => {
         purchaseQty,
         purchasePrice: Number((item?.purchasePrice ?? item?.price) || 0),
         retailSalePrice: Number(
-          masterProduct?.retailSalePrice ??
-            masterProduct?.salePrice ??
-            masterProduct?.price ??
-            item?.retailSalePrice ??
+          item?.retailSalePrice ??
             item?.salePrice ??
             item?.price ??
+            (isDraftPurchase ? undefined : masterProduct?.retailSalePrice) ??
+            (isDraftPurchase ? undefined : masterProduct?.salePrice) ??
+            (isDraftPurchase ? undefined : masterProduct?.price) ??
             0
         ),
         wholeSalePrice: Number(
-          masterProduct?.wholeSalePrice ?? item?.wholeSalePrice ?? 0
+          item?.wholeSalePrice ??
+            (isDraftPurchase ? undefined : masterProduct?.wholeSalePrice) ??
+            0
         ),
         discountAllowed: Boolean(masterProduct?.discountAllowed || false),
         maxAllowedDiscount: Number(masterProduct?.maxAllowedDiscount || 0),
@@ -233,6 +238,82 @@ const ProductModal = ({ onClose }) => {
     return nextErrors;
   };
 
+  const syncEditedPricesToProducts = async (rows) => {
+    const productsRes = await apiRequest("/products", { method: "GET" });
+    const latestProducts = Array.isArray(productsRes?.data) ? productsRes.data : [];
+
+    setAllProducts(latestProducts);
+
+    const productsById = new Map(
+      latestProducts
+        .filter((product) => product?._id)
+        .map((product) => [String(product._id), product])
+    );
+    const latestProductsByName = new Map();
+
+    latestProducts.forEach((product) => {
+      const key = normalizeProductKey(product?.name);
+      if (key && !latestProductsByName.has(key)) {
+        latestProductsByName.set(key, product);
+      }
+    });
+
+    await Promise.all(
+      rows.map(async (row) => {
+        const matchedProduct =
+          productsById.get(String(row?.productId || "")) ||
+          latestProductsByName.get(normalizeProductKey(row?.name));
+
+        if (!matchedProduct?._id) return;
+
+        const discountAllowed =
+          typeof row?.discountAllowed === "boolean"
+            ? row.discountAllowed
+            : Boolean(matchedProduct?.discountAllowed);
+
+        await apiRequest(`/products/updateProduct/${matchedProduct._id}`, {
+          method: "PUT",
+          data: {
+            ...matchedProduct,
+            name: row?.name || matchedProduct?.name || "",
+            manufacturer:
+              row?.manufacturer ||
+              row?.company ||
+              matchedProduct?.manufacturer ||
+              "",
+            category: row?.category || matchedProduct?.category || "Food",
+            shelf: Number(row?.shelf ?? matchedProduct?.shelf ?? 0),
+            purchasePrice: Number(
+              row?.purchasePrice ??
+                matchedProduct?.purchasePrice ??
+                matchedProduct?.cost ??
+                0
+            ),
+            retailSalePrice: Number(row?.retailSalePrice || 0),
+            wholeSalePrice: Number(row?.wholeSalePrice || 0),
+            stock: Number(matchedProduct?.stock ?? 0),
+            discountAllowed,
+            maxAllowedDiscount: discountAllowed
+              ? Number(row?.maxAllowedDiscount ?? matchedProduct?.maxAllowedDiscount ?? 0)
+              : 0,
+            unit: row?.unit || matchedProduct?.unit || row?.uom || "unit",
+            baseUnit:
+              row?.baseUnit ||
+              matchedProduct?.baseUnit ||
+              row?.unit ||
+              row?.uom ||
+              "unit",
+            uomLevels: Array.isArray(row?.uomLevels)
+              ? row.uomLevels
+              : Array.isArray(matchedProduct?.uomLevels)
+                ? matchedProduct.uomLevels
+                : [],
+          },
+        });
+      })
+    );
+  };
+
   const handleSaveAll = async () => {
     if (!gridRows.length) {
       setShowError(true);
@@ -282,6 +363,7 @@ const ProductModal = ({ onClose }) => {
 
       // After successful save, update the purchase status to "Completed"
       if (response?.success !== false) {
+        await syncEditedPricesToProducts(gridRows);
         try {
           // Fetch all purchases to find the one we just used
           const purchasesRes = await apiRequest("/purchases", { method: "GET" });

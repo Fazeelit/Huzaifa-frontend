@@ -314,6 +314,7 @@ const EditPurchaseModal = ({ purchase, onClose, onUpdated }) => {
         invoiceNumber: String(invoiceNumber || "").trim(),
         totalAmount,
         taxAmount,
+        purchaseStatus: "Draft",
         products: items.map((it) => {
           const normalizedStatus = normalizeProductStatus(it.status);
           const statusQuantity = getStatusQuantityValue(it.statusQuantity);

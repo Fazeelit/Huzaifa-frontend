@@ -10,6 +10,7 @@ import {
   BadgeDollarSign,
   Eye,
   EyeOff,
+  Smartphone,
 } from "lucide-react";
 
 import ProductCard from "../products/ProductCard";
@@ -267,30 +268,35 @@ export default function ProductsPage() {
       count: inStockProducts.filter((p) => String(p.status || "").toLowerCase() === "active").length,
       color: "pink",
       Icon: PackageCheck,
+      compactValue: true,
     },
     {
       title: "Low Stock",
       count: inStockProducts.filter((p) => Number(p.stock) <= 10).length,
       color: "amber",
       Icon: TriangleAlert,
+      compactValue: true,
     },
     {
       title: "Out of Stock",
       count: inventoryProducts.filter((p) => Number(p.stock) === 0).length,
       color: "red",
       Icon: TrendingDown,
+      compactValue: true,
     },
     {
       title: "All Products Purchase Amount",
       count: showFinancialTotals ? `Rs. ${totalPurchaseAmount.toFixed(2)}` : "Rs. ******",
       color: "emerald",
       Icon: HandCoins,
+      compactValue: true,
     },
     {
       title: "Total Expected Profit",
       count: showFinancialTotals ? `Rs. ${expectedProfit.toFixed(2)}` : "Rs. ******",
       color: "violet",
       Icon: BadgeDollarSign,
+      compactValue: true,
     },
   ];
 
@@ -343,7 +349,14 @@ export default function ProductsPage() {
       {/* HEADER */}
       <div className="relative mb-6 flex flex-col justify-between gap-4 rounded-2xl border border-white/70 bg-white/90 p-4 shadow-sm backdrop-blur-sm md:flex-row md:p-5">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Product Inventory</h1>
+          <div className="mb-1 flex items-center gap-2.5">
+            <div className="rounded-lg bg-gradient-to-r from-blue-100 to-emerald-100 p-1.5 dark:from-blue-900/30 dark:to-emerald-900/30">
+              <Smartphone className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            </div>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white md:text-2xl">
+              Products Management
+            </h1>
+          </div>
           <p className="mt-1 text-slate-600">Manage your product catalog</p>
         </div>
 

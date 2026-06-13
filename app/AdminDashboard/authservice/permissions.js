@@ -27,20 +27,43 @@ const CRUD_ENDPOINT_PERMISSION_RULES = [
 export const blockedButtonClass =
   "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-red-50 disabled:hover:text-red-700 disabled:hover:border-red-300";
 
+export const normalizeRoleValue = (value) => String(value || "").trim().toUpperCase();
+
+export const isAdminRole = (role = readPersistedAuthValue("role")) => {
+  const normalizedRole = normalizeRoleValue(role);
+  return normalizedRole === "ADMIN" || normalizedRole.includes("ADMIN");
+};
+
+export const normalizePermissionsForRole = (
+  permissions = [],
+  role = readPersistedAuthValue("role")
+) => {
+  const normalizedPermissions = Array.isArray(permissions)
+    ? permissions.filter((permission) => typeof permission === "string" && permission.trim())
+    : [];
+
+  if (!isAdminRole(role)) {
+    return Array.from(new Set(normalizedPermissions));
+  }
+
+  return Array.from(new Set(["*", ...normalizedPermissions]));
+};
+
 export const parseStoredPermissions = () => {
   if (typeof window === "undefined") return [];
 
   try {
     const raw = readPersistedAuthValue("permissions");
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    return normalizePermissionsForRole(parsed);
   } catch {
-    return [];
+    return normalizePermissionsForRole([]);
   }
 };
 
 export const hasPermission = (permission, permissions = parseStoredPermissions()) => {
   if (!permission) return true;
+  if (isAdminRole()) return true;
   if (!Array.isArray(permissions)) return false;
   return permissions.includes("*") || permissions.includes(permission);
 };
