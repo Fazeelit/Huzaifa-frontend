@@ -101,12 +101,38 @@ const getReturnedSaleQuantity = (product = {}) =>
 const getInvoiceAmount = (quantity, salePrice) =>
   Number((Math.max(Number(quantity) || 0, 0) * (Number(salePrice) || 0)).toFixed(2));
 
+const getSaleLineUnitPrice = (product = {}) =>
+  Number(product?.salePrice ?? product?.price ?? product?.retailSalePrice ?? 0) || 0;
+
+const calculateCurrentSaleInvoiceTotal = (sale) =>
+  Number(
+    (
+      (Array.isArray(sale?.products) ? sale.products : []).reduce(
+        (sum, product) => sum + getInvoiceAmount(getChargedSaleQuantity(product), getSaleLineUnitPrice(product)),
+        0
+      ) || 0
+    ).toFixed(2)
+  );
+
+const calculateCurrentSaleNetTotal = (sale) =>
+  Number(
+    Math.max(calculateCurrentSaleInvoiceTotal(sale) - (Number(sale?.discount) || 0), 0).toFixed(2)
+  );
+
 const derivePaymentStatus = (paidAmount, totalAmount) => {
   const paid = Number(paidAmount) || 0;
   const total = Number(totalAmount) || 0;
   if (paid <= 0) return "Pending";
   if (paid >= total) return "Paid";
   return "Partial";
+};
+
+const deriveBillStatus = (paidAmount, totalAmount) => {
+  const paid = Number(paidAmount) || 0;
+  const total = Number(totalAmount) || 0;
+  if (paid <= 0) return "pending";
+  if (paid >= total) return "paid";
+  return "partial";
 };
 
 const toNumber = (value) => {
@@ -141,6 +167,15 @@ const getCustomersArray = (response) => {
   if (Array.isArray(response?.data)) return response.data;
   return [];
 };
+
+const getProductsArray = (response) => {
+  if (Array.isArray(response?.products)) return response.products;
+  if (Array.isArray(response?.data?.products)) return response.data.products;
+  if (Array.isArray(response?.data)) return response.data;
+  return [];
+};
+
+const normalizeProductKey = (value) => String(value || "").trim().toLowerCase();
 
 const normalizeInvoiceKeys = (...values) => {
   const keys = new Set();
@@ -232,7 +267,7 @@ const SalesPage = () => {
       0
     );
 
-    return Number((Number(sale?.totalAmount || 0) - totalPurchaseAmount).toFixed(2));
+    return Number((calculateCurrentSaleNetTotal(sale) - totalPurchaseAmount).toFixed(2));
   };
 
   useEffect(() => {
@@ -282,6 +317,7 @@ const SalesPage = () => {
 
         return {
           ...sale,
+          totalAmount: calculateCurrentSaleNetTotal(sale),
           paidAmount:
             invoiceMatch && invoiceMatch.paidAmount > toNumber(sale?.paidAmount)
               ? invoiceMatch.paidAmount
@@ -381,6 +417,70 @@ const SalesPage = () => {
         monthlyProfit: 0,
       });
     }
+  };
+
+  const syncReturnedSaleToCustomerBill = async ({ sale, resolvedSale, returnedValueDelta }) => {
+    const customerId = String(
+      sale?.customerId || sale?.customer?._id || sale?.customer?.id || ""
+    ).trim();
+
+    if (!customerId || Number(returnedValueDelta || 0) <= 0) {
+      return;
+    }
+
+    const customerResponse = await apiRequest(`/customers/${customerId}`, { method: "GET" });
+    if (!customerResponse?.success || !customerResponse?.customer) {
+      return;
+    }
+
+    const customer = customerResponse.customer;
+    const existingBills = Array.isArray(customer?.bills) ? customer.bills : [];
+    const saleBillKeys = normalizeInvoiceKeys(
+      sale?.invoiceNo,
+      sale?.invoiceNumber,
+      resolvedSale?.invoiceNo,
+      resolvedSale?.invoiceNumber,
+      sale?._id
+    );
+
+    let matchedBill = false;
+    const nextBills = existingBills.map((bill) => {
+      const billKeys = normalizeInvoiceKeys(bill?.id, bill?.reference, bill?.billId);
+      if (!saleBillKeys.some((key) => billKeys.includes(key))) {
+        return bill;
+      }
+
+      matchedBill = true;
+      const nextAmount = Math.max(Number(resolvedSale?.totalAmount || 0), 0);
+      const nextPaidAmount = Math.min(toNumber(bill?.paidAmount), nextAmount);
+
+      return {
+        ...bill,
+        amount: String(nextAmount),
+        paidAmount: nextPaidAmount,
+        status: deriveBillStatus(nextPaidAmount, nextAmount),
+      };
+    });
+
+    if (!matchedBill) {
+      return;
+    }
+
+    const nextTotalSpent = nextBills.reduce((sum, bill) => sum + toNumber(bill?.amount), 0);
+    const nextTotalDue = nextBills.reduce(
+      (sum, bill) => sum + Math.max(toNumber(bill?.amount) - toNumber(bill?.paidAmount), 0),
+      0
+    );
+
+    await apiRequest(`/customers/${customerId}`, {
+      method: "PUT",
+      data: {
+        ...customer,
+        bills: nextBills,
+        totalSpent: nextTotalSpent,
+        totalDue: nextTotalDue,
+      },
+    });
   };
 
   useEffect(() => {
@@ -784,6 +884,7 @@ const SalesPage = () => {
           .map((entry) => [Number(entry?.index), entry])
           .filter(([index]) => Number.isInteger(index))
       );
+      const stockRestockByProduct = new Map();
 
       let returnedValueDelta = 0;
 
@@ -800,10 +901,31 @@ const SalesPage = () => {
           0,
           Math.min(Number(update?.returnedQuantity ?? currentReturnedQty) || 0, lineQuantity)
         );
+        const unitSalePrice = Number(product?.salePrice ?? product?.price ?? 0) || 0;
+        const returnedQtyDelta = nextReturnedQty - currentReturnedQty;
         returnedValueDelta += getInvoiceAmount(
-          nextReturnedQty - currentReturnedQty,
-          product?.salePrice
+          returnedQtyDelta,
+          unitSalePrice
         );
+
+        if (returnedQtyDelta !== 0) {
+          const productIdCandidate = String(
+            product?.productId?._id ||
+              product?.productId ||
+              update?.productId ||
+              update?.itemId ||
+              ""
+          ).trim();
+          const productNameKey = normalizeProductKey(product?.name);
+          const stockKey = productIdCandidate || productNameKey || `line-${index}`;
+          const existingAdjustment = stockRestockByProduct.get(stockKey) || {
+            productIdCandidate,
+            productNameKey,
+            delta: 0,
+          };
+          existingAdjustment.delta += returnedQtyDelta;
+          stockRestockByProduct.set(stockKey, existingAdjustment);
+        }
 
         return {
           ...product,
@@ -812,17 +934,43 @@ const SalesPage = () => {
         };
       });
 
+      const currentReturnedValue = baseProducts.reduce(
+        (sum, product) =>
+          sum +
+          getInvoiceAmount(
+            getReturnedSaleQuantity(product),
+            Number(product?.salePrice ?? product?.price ?? 0) || 0
+          ),
+        0
+      );
+
+      const nextReturnedValue = updatedProducts.reduce(
+        (sum, product) =>
+          sum +
+          getInvoiceAmount(
+            getReturnedSaleQuantity(product),
+            Number(product?.salePrice ?? product?.price ?? 0) || 0
+          ),
+        0
+      );
+
+      const originalSubtotal = Number(
+        (Number(sale?.subtotal) || Number(sale?.totalAmount) || 0) + currentReturnedValue
+      );
+      const originalTotalAmount = Number(
+        (Number(sale?.totalAmount) || 0) + currentReturnedValue
+      );
       const subtotal = Number(
-        Math.max((Number(sale?.subtotal) || 0) - returnedValueDelta, 0).toFixed(2)
+        Math.max(originalSubtotal - nextReturnedValue, 0).toFixed(2)
       );
       const totalAmount = Number(
-        Math.max((Number(sale?.totalAmount) || 0) - returnedValueDelta, 0).toFixed(2)
+        Math.max(originalTotalAmount - nextReturnedValue, 0).toFixed(2)
       );
       const paidAmount = Number(
         Math.max((Number(sale?.paidAmount) || 0) - returnedValueDelta, 0).toFixed(2)
       );
       const returnedAmount = Number(
-        Math.max((Number(sale?.returnedAmount) || 0) + returnedValueDelta, 0).toFixed(2)
+        Math.max(nextReturnedValue, 0).toFixed(2)
       );
       const returnAmount = Number(Math.max(paidAmount - totalAmount, 0).toFixed(2));
       const paymentStatus = derivePaymentStatus(paidAmount, totalAmount);
@@ -862,6 +1010,51 @@ const SalesPage = () => {
 
       if (res?.success) {
         const resolvedSale = res?.data || res?.sale || optimisticSale;
+
+        if (stockRestockByProduct.size > 0) {
+          const productsResponse = await apiRequest("/products", { method: "GET" });
+          const allProducts = getProductsArray(productsResponse);
+          const productsById = new Map(
+            allProducts
+              .map((product) => [String(product?._id || "").trim(), product])
+              .filter(([id]) => id)
+          );
+          const productsByName = new Map();
+
+          allProducts.forEach((product) => {
+            const key = normalizeProductKey(product?.name);
+            if (key && !productsByName.has(key)) {
+              productsByName.set(key, product);
+            }
+          });
+
+          await Promise.all(
+            Array.from(stockRestockByProduct.values()).map(async ({ productIdCandidate, productNameKey, delta }) => {
+              const matchedProduct =
+                productsById.get(productIdCandidate) ||
+                productsByName.get(productNameKey);
+
+              if (!matchedProduct?._id || !delta) {
+                return;
+              }
+
+              await apiRequest(`/products/updateProduct/${matchedProduct._id}`, {
+                method: "PUT",
+                data: {
+                  ...matchedProduct,
+                  stock: Math.max(Number(matchedProduct?.stock ?? 0) + Number(delta || 0), 0),
+                },
+              });
+            })
+          );
+        }
+
+        await syncReturnedSaleToCustomerBill({
+          sale,
+          resolvedSale,
+          returnedValueDelta,
+        });
+
         setSelectedSale(resolvedSale);
         setSales((prev) =>
           prev.map((entry) =>

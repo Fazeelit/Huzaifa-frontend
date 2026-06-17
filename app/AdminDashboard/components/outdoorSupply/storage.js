@@ -26,6 +26,9 @@ const createId = (prefix) =>
 
 export const getOutdoorSuppliers = () => readStorageArray(OUTDOOR_SUPPLIERS_KEY);
 
+export const getOutdoorSupplierById = (supplierId) =>
+  getOutdoorSuppliers().find((entry) => String(entry?.id) === String(supplierId)) || null;
+
 export const saveOutdoorSupplier = (supplier) => {
   const nextSupplier = {
     id: supplier?.id || createId("outsupplier"),
@@ -43,6 +46,27 @@ export const saveOutdoorSupplier = (supplier) => {
   const current = getOutdoorSuppliers();
   writeStorageArray(OUTDOOR_SUPPLIERS_KEY, [nextSupplier, ...current]);
   return nextSupplier;
+};
+
+export const updateOutdoorSupplier = (supplierId, updates) => {
+  const current = getOutdoorSuppliers();
+  const next = current.map((entry) =>
+    String(entry?.id) === String(supplierId)
+      ? {
+          ...entry,
+          ...(typeof updates === "function" ? updates(entry) : updates),
+        }
+      : entry
+  );
+  writeStorageArray(OUTDOOR_SUPPLIERS_KEY, next);
+  return next.find((entry) => String(entry?.id) === String(supplierId)) || null;
+};
+
+export const deleteOutdoorSupplier = (supplierId) => {
+  const current = getOutdoorSuppliers();
+  const next = current.filter((entry) => String(entry?.id) !== String(supplierId));
+  writeStorageArray(OUTDOOR_SUPPLIERS_KEY, next);
+  return next;
 };
 
 export const getOutdoorSupplies = () => readStorageArray(OUTDOOR_SUPPLIES_KEY);
@@ -110,7 +134,6 @@ export const getOutdoorSupplySalePayload = (supply) => {
       name: item?.productName || "",
       manufacturer: item?.manufacturer || "",
       quantity: Number(item?.saleQuantity || 0),
-      purchasePrice: Number(item?.price || 0),
       price: Number(item?.price || 0),
       totalPrice: Number(item?.totalPrice || 0),
       returnedQuantity: Number(item?.returnedQuantity || 0),

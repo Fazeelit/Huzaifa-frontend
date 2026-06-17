@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Save, Trash2, Truck } from "lucide-react";
+import { ArrowLeft, Plus, Save, ShoppingCart, Trash2, Truck } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { apiRequest } from "../../authservice/api";
 import { usePermissions } from "../../authservice/usePermissions";
@@ -43,39 +43,87 @@ const getSaleQuantity = (item) =>
   );
 
 const getTotalPrice = (item) => getSaleQuantity(item) * Number(item?.price || 0);
+const calculateItemsTotal = (itemsList) =>
+  (Array.isArray(itemsList) ? itemsList : []).reduce(
+    (sum, currentItem) => sum + getTotalPrice(currentItem),
+    0
+  );
+
+const mapSupplyItems = (savedItems) =>
+  Array.isArray(savedItems) && savedItems.length
+    ? savedItems.map((item) => ({
+        id: item?.id || createEmptyItem().id,
+        productId: item?.productId || "",
+        productName: item?.productName || "",
+        manufacturer: item?.manufacturer || "",
+        receivedQuantity: Number(item?.receivedQuantity || 0),
+        price: Number(item?.price || 0),
+        returnedQuantity: Number(item?.returnedQuantity || 0),
+        searchText: item?.productName || "",
+      }))
+    : [createEmptyItem()];
 
 export default function NewOutdoorSupplyPage() {
   const params = useParams();
   const router = useRouter();
+  const redirectTimeoutRef = useRef(null);
   const { crud } = usePermissions();
   const { canCreate } = crud("PURCHASE");
-  const supplyId = String(params?.id || "").trim();
+  const supplyId = Array.isArray(params?.id)
+    ? String(params.id[0] || "").trim()
+    : String(params?.id || "").trim();
   const isEditMode = Boolean(supplyId);
   const canSubmit = isEditMode ? true : canCreate;
-  const initialSupply = isEditMode ? getOutdoorSupplyById(supplyId) : null;
+  const initialSupply = useMemo(
+    () => (isEditMode ? getOutdoorSupplyById(supplyId) : null),
+    [isEditMode, supplyId]
+  );
   const [suppliers] = useState(() => getOutdoorSuppliers());
   const [productsList, setProductsList] = useState([]);
-  const [supplierId, setSupplierId] = useState(() => String(initialSupply?.supplierId || ""));
-  const [supplyDate, setSupplyDate] = useState(() =>
-    formatDateDDMMYYYY(initialSupply?.supplyDate || initialSupply?.createdAt || new Date())
-  );
-  const [invoiceNumber, setInvoiceNumber] = useState(() => String(initialSupply?.invoiceNumber || ""));
-  const [items, setItems] = useState(() =>
-    Array.isArray(initialSupply?.items) && initialSupply.items.length
-      ? initialSupply.items.map((item) => ({
-          id: item?.id || createEmptyItem().id,
-          productId: item?.productId || "",
-          productName: item?.productName || "",
-          manufacturer: item?.manufacturer || "",
-          receivedQuantity: Number(item?.receivedQuantity || 0),
-          price: Number(item?.price || 0),
-          returnedQuantity: Number(item?.returnedQuantity || 0),
-          searchText: item?.productName || "",
-        }))
-      : [createEmptyItem()]
-  );
+  const [supplierId, setSupplierId] = useState("");
+  const [supplyDate, setSupplyDate] = useState(() => formatDateDDMMYYYY(new Date()));
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [items, setItems] = useState(() => [createEmptyItem()]);
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState({ type: "", text: "" });
+  const [processingSaleItemId, setProcessingSaleItemId] = useState("");
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimeoutRef.current) {
+        window.clearTimeout(redirectTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isEditMode) {
+      setSupplierId("");
+      setSupplyDate(formatDateDDMMYYYY(new Date()));
+      setInvoiceNumber("");
+      setItems([createEmptyItem()]);
+      setErrors({});
+      setMessage({ type: "", text: "" });
+      return;
+    }
+
+    if (!initialSupply) {
+      setMessage({
+        type: "error",
+        text: "This outdoor supply record was not found.",
+      });
+      return;
+    }
+
+    setSupplierId(String(initialSupply.supplierId || ""));
+    setSupplyDate(
+      formatDateDDMMYYYY(initialSupply.supplyDate || initialSupply.createdAt || new Date())
+    );
+    setInvoiceNumber(String(initialSupply.invoiceNumber || ""));
+    setItems(mapSupplyItems(initialSupply.items));
+    setErrors({});
+    setMessage({ type: "", text: "" });
+  }, [initialSupply, isEditMode]);
 
   useEffect(() => {
     const mapProductsForDropdown = (products) =>
@@ -89,7 +137,16 @@ export default function NewOutdoorSupplyPage() {
                 id: product._id || product.id || "",
                 name: product.name,
                 manufacturer: product.manufacturer || "",
-                purchasePrice: Number(product.purchasePrice || product.cost || 0),
+                wholeSalePrice: Number(
+                  product.wholeSalePrice ??
+                    product.wholesalePrice ??
+                    product.retailSalePrice ??
+                    product.salePrice ??
+                    product.price ??
+                    product.purchasePrice ??
+                    product.cost ??
+                    0
+                ),
               },
             ])
         ).values()
@@ -122,7 +179,7 @@ export default function NewOutdoorSupplyPage() {
   );
 
   const totalBill = useMemo(
-    () => items.reduce((sum, item) => sum + getTotalPrice(item), 0),
+    () => calculateItemsTotal(items),
     [items]
   );
 
@@ -170,7 +227,7 @@ export default function NewOutdoorSupplyPage() {
           price:
             Number(item.price || 0) > 0
               ? Number(item.price || 0)
-              : Number(matchedProduct.purchasePrice || 0),
+              : Number(matchedProduct.wholeSalePrice || 0),
         };
       })
     );
@@ -181,6 +238,158 @@ export default function NewOutdoorSupplyPage() {
 
   const handleRemoveItem = (id) => {
     setItems((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== id) : prev));
+  };
+
+  const handleCreateSale = async (item) => {
+    const saleQuantity = getSaleQuantity(item);
+
+    if (!supplierId) {
+      setErrors((prev) => ({ ...prev, supplierId: "Outdoor supplier is required." }));
+      setMessage({ type: "error", text: "Select an outdoor supplier before creating a sale." });
+      return;
+    }
+
+    if (!toIsoFromDDMMYYYY(supplyDate)) {
+      setErrors((prev) => ({ ...prev, supplyDate: "Supply date must be dd/mm/yyyy." }));
+      setMessage({ type: "error", text: "Enter a valid supply date before creating a sale." });
+      return;
+    }
+
+    if (!String(invoiceNumber || "").trim()) {
+      setErrors((prev) => ({ ...prev, invoiceNumber: "Invoice number is required." }));
+      setMessage({ type: "error", text: "Enter an invoice number before creating a sale." });
+      return;
+    }
+
+    if (!String(item.productName || "").trim()) {
+      setErrors((prev) => ({ ...prev, [`${item.id}-productName`]: "Product name is required." }));
+      setMessage({ type: "error", text: "Select a product before creating a sale." });
+      return;
+    }
+
+    if (!String(item.manufacturer || "").trim()) {
+      setErrors((prev) => ({ ...prev, [`${item.id}-manufacturer`]: "Manufacturer is required." }));
+      setMessage({ type: "error", text: "Enter manufacturer before creating a sale." });
+      return;
+    }
+
+    if (!Number(item.receivedQuantity || 0)) {
+      setErrors((prev) => ({ ...prev, [`${item.id}-receivedQuantity`]: "Received quantity is required." }));
+      setMessage({ type: "error", text: "Enter received quantity before creating a sale." });
+      return;
+    }
+
+    if (!Number(item.price || 0)) {
+      setErrors((prev) => ({ ...prev, [`${item.id}-price`]: "Price is required." }));
+      setMessage({ type: "error", text: "Enter price before creating a sale." });
+      return;
+    }
+
+    if (saleQuantity < 1) return;
+
+    try {
+      setProcessingSaleItemId(item.id);
+      setMessage({ type: "", text: "" });
+
+      const payload = {
+        invoiceNo: String(invoiceNumber || "").trim(),
+        products: [
+          {
+            productId: item?.productId || undefined,
+            name: String(item?.productName || "").trim(),
+            manufacturer: String(item?.manufacturer || "").trim(),
+            quantity: saleQuantity,
+            price: Number(item?.price || 0),
+            totalPrice: getTotalPrice(item),
+            returnedQuantity: Number(item?.returnedQuantity || 0),
+            receivedQuantity: Number(item?.receivedQuantity || 0),
+          },
+        ],
+        subtotal: getTotalPrice(item),
+        discount: 0,
+        totalAmount: getTotalPrice(item),
+        paidAmount: getTotalPrice(item),
+        returnAmount: 0,
+        customerName: String(selectedSupplier?.supplierName || "Outdoor Supply"),
+        paymentMethod: "Cash",
+        paymentStatus: "Paid",
+      };
+
+      const response = await apiRequest("/sales/createSale", {
+        method: "POST",
+        data: payload,
+      });
+
+      if (response?.success === false) {
+        setMessage({
+          type: "error",
+          text: response?.message || "Failed to create sale for this item.",
+        });
+        return;
+      }
+
+      const normalizedReceivedQuantity = Number(item?.returnedQuantity || 0);
+      const nextItems = items.map((currentItem) =>
+        currentItem.id !== item.id
+          ? currentItem
+          : {
+              ...currentItem,
+              receivedQuantity: normalizedReceivedQuantity,
+              returnedQuantity: 0,
+            }
+      );
+
+      setItems(nextItems);
+
+      if (isEditMode) {
+        const persistedTotalBill = Math.max(
+          Number(initialSupply?.totalBill || 0),
+          calculateItemsTotal(items),
+          getTotalPrice(item)
+        );
+
+        updateOutdoorSupply(supplyId, (existingSupply) => ({
+          ...existingSupply,
+          supplierId,
+          supplierName: selectedSupplier?.supplierName || existingSupply?.supplierName || "",
+          routeName: selectedSupplier?.routeName || existingSupply?.routeName || "",
+          invoiceNumber: String(invoiceNumber || "").trim(),
+          supplyDate: toIsoFromDDMMYYYY(supplyDate),
+          items: nextItems.map((currentItem) => ({
+            id: currentItem.id,
+            productId: currentItem.productId,
+            productName: String(currentItem.productName || "").trim(),
+            manufacturer: String(currentItem.manufacturer || "").trim(),
+            receivedQuantity: Number(currentItem.receivedQuantity || 0),
+            returnedQuantity: Number(currentItem.returnedQuantity || 0),
+            saleQuantity: getSaleQuantity(currentItem),
+            price: Number(currentItem.price || 0),
+            totalPrice: getTotalPrice(currentItem),
+          })),
+          totalBill: persistedTotalBill,
+          createdSaleId: String(response?.data?._id || existingSupply?.createdSaleId || "").trim(),
+          createdSaleInvoiceNo: String(
+            response?.data?.invoiceNo || payload.invoiceNo || existingSupply?.createdSaleInvoiceNo || ""
+          ).trim(),
+        }));
+      }
+
+      setMessage({
+        type: "success",
+        text: `Sale created successfully for ${item.productName || "outdoor supply item"}.`,
+      });
+    } catch (error) {
+      console.error("Failed to create sale for outdoor supply item:", error);
+      setMessage({
+        type: "error",
+        text:
+          error?.response?.data?.message ||
+          error?.message ||
+          "Failed to create sale for this item.",
+      });
+    } finally {
+      setProcessingSaleItemId("");
+    }
   };
 
   const validate = () => {
@@ -246,13 +455,18 @@ export default function NewOutdoorSupplyPage() {
         ? "Outdoor supply updated successfully."
         : "Outdoor supply saved successfully.",
     });
-    setTimeout(() => {
+
+    if (redirectTimeoutRef.current) {
+      window.clearTimeout(redirectTimeoutRef.current);
+    }
+
+    redirectTimeoutRef.current = window.setTimeout(() => {
       router.push("/AdminDashboard/outdoor-supply");
     }, 900);
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 pb-6">
+    <div className="mx-auto w-full max-w-7xl space-y-5 pb-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <Link
@@ -348,7 +562,7 @@ export default function NewOutdoorSupplyPage() {
           <div className="space-y-3">
             {items.map((item) => (
               <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[1.6fr_1.1fr_0.8fr_1fr_0.8fr_0.8fr_1fr_auto] xl:items-start">
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[1.9fr_1.2fr_0.85fr_1fr_0.85fr_0.85fr_1fr_auto] xl:items-start">
                   <div className="space-y-1">
                     <label className="block min-h-[2rem] text-[11px] font-semibold uppercase leading-4 tracking-wide text-slate-500">Product Name</label>
                     <input
@@ -391,7 +605,7 @@ export default function NewOutdoorSupplyPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block min-h-[2rem] text-[11px] font-semibold uppercase leading-4 tracking-wide text-slate-500">Price / Purchase Price</label>
+                    <label className="block min-h-[2rem] text-[11px] font-semibold uppercase leading-4 tracking-wide text-slate-500">Whole Sale Price</label>
                     <input
                       type="number"
                       min="0"
@@ -433,13 +647,27 @@ export default function NewOutdoorSupplyPage() {
 
                   <div className="space-y-1">
                     <label className="block min-h-[2rem] text-[11px] font-semibold uppercase leading-4 tracking-wide text-slate-500">Action</label>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveItem(item.id)}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveItem(item.id)}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      {getSaleQuantity(item) >= 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => handleCreateSale(item)}
+                          disabled={processingSaleItemId === item.id}
+                          className={`inline-flex h-10 items-center gap-2 rounded-xl bg-blue-600 px-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 ${blockedButtonClass}`}
+                          {...blockedButtonProps(canSubmit)}
+                        >
+                          <ShoppingCart className="h-4 w-4" />
+                          {processingSaleItemId === item.id ? "Creating..." : "Create Sale"}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               </div>

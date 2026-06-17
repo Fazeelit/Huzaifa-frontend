@@ -2,16 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Pencil, Plus, Save, ShoppingCart, Store, Trash2, Truck } from "lucide-react";
+import { Pencil, Plus, Save, Store, Trash2, Truck } from "lucide-react";
 import { apiRequest } from "../../authservice/api";
 import { usePermissions } from "../../authservice/usePermissions";
 import { blockedButtonClass, blockedButtonProps } from "../../authservice/permissions";
 import { formatDateDDMMYYYY } from "../../utils/formatting";
 import {
   deleteOutdoorSupply,
+  getOutdoorSuppliers,
   getOutdoorSupplies,
-  getOutdoorSupplySalePayload,
-  updateOutdoorSupply,
 } from "../outdoorSupply/storage";
 
 const formatCurrency = (value) =>
@@ -20,85 +19,99 @@ const formatCurrency = (value) =>
     maximumFractionDigits: 2,
   })}`;
 
+const getArray = (response) =>
+  Array.isArray(response?.data)
+    ? response.data
+    : Array.isArray(response?.data?.data)
+    ? response.data.data
+    : Array.isArray(response)
+    ? response
+    : [];
+
+const getSaleTotal = (sale) =>
+  Number(sale?.totalAmount ?? sale?.total ?? sale?.grandTotal ?? sale?.subtotal ?? 0) || 0;
+
 export default function OutdoorSupplyPage() {
   const { crud } = usePermissions();
-  const { canCreate, canDelete } = crud("PURCHASE");
+  const { canCreate, canEdit, canDelete } = crud("PURCHASE");
+  const [suppliers, setSuppliers] = useState([]);
   const [supplies, setSupplies] = useState([]);
-  const [processingId, setProcessingId] = useState("");
+  const [sales, setSales] = useState([]);
   const [message, setMessage] = useState({ type: "", text: "" });
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  const syncSupplies = () => setSupplies(getOutdoorSupplies());
+  const syncData = () => {
+    setSuppliers(getOutdoorSuppliers());
+    setSupplies(getOutdoorSupplies());
+  };
 
   useEffect(() => {
-    syncSupplies();
-    window.addEventListener("storage", syncSupplies);
-    return () => window.removeEventListener("storage", syncSupplies);
+    const fetchSales = async () => {
+      try {
+        const response = await apiRequest("/sales", {
+          method: "GET",
+          suppressErrorToast: true,
+        });
+        setSales(getArray(response));
+      } catch (error) {
+        console.error("Failed to fetch sales for outdoor supply page:", error);
+        setSales([]);
+      }
+    };
+
+    syncData();
+    fetchSales();
+    window.addEventListener("storage", syncData);
+    return () => window.removeEventListener("storage", syncData);
   }, []);
+
+  const resolvedSupplies = useMemo(() => {
+    const salesByKey = new Map();
+
+    sales.forEach((sale) => {
+      [sale?._id, sale?.invoiceNo, sale?.invoiceNumber]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .forEach((key) => {
+          salesByKey.set(key, sale);
+        });
+    });
+
+    return supplies.map((supply) => {
+      const linkedSale =
+        [
+          supply?.createdSaleId,
+          supply?.createdSaleInvoiceNo,
+          supply?.invoiceNumber,
+        ]
+          .map((value) => salesByKey.get(String(value || "").trim()))
+          .find(Boolean) || null;
+
+      const resolvedTotalBill =
+        Number(supply?.totalBill || 0) > 0
+          ? Number(supply?.totalBill || 0)
+          : getSaleTotal(linkedSale);
+
+      return {
+        ...supply,
+        resolvedTotalBill,
+      };
+    });
+  }, [sales, supplies]);
 
   const totals = useMemo(
     () =>
-      supplies.reduce(
+      resolvedSupplies.reduce(
         (acc, supply) => {
           acc.totalBills += 1;
-          acc.totalAmount += Number(supply?.totalBill || 0);
+          acc.totalAmount += Number(supply?.resolvedTotalBill || 0);
           acc.totalItems += Array.isArray(supply?.items) ? supply.items.length : 0;
           return acc;
         },
         { totalBills: 0, totalAmount: 0, totalItems: 0 }
       ),
-    [supplies]
+    [resolvedSupplies]
   );
-
-  const handleCreateSale = async (supply) => {
-    if (!supply?.id || supply?.createdSaleId) return;
-
-    try {
-      setProcessingId(supply.id);
-      setMessage({ type: "", text: "" });
-      const payload = getOutdoorSupplySalePayload(supply);
-      if (!payload.products.length) {
-        setMessage({
-          type: "error",
-          text: "This outdoor supply has no sale quantity left to create a sale.",
-        });
-        return;
-      }
-      const response = await apiRequest("/sales/createSale", {
-        method: "POST",
-        data: payload,
-      });
-
-      if (response?.success === false) {
-        setMessage({
-          type: "error",
-          text: response?.message || "Failed to create sale for outdoor supply.",
-        });
-        return;
-      }
-
-      updateOutdoorSupply(supply.id, {
-        createdSaleId: response?.data?._id || `local-${Date.now()}`,
-        createdSaleInvoiceNo: payload.invoiceNo,
-      });
-      syncSupplies();
-      setMessage({
-        type: "success",
-        text: `Sale created successfully for ${supply.supplierName || "Outdoor Supply"}.`,
-      });
-    } catch (error) {
-      console.error("Failed to create outdoor supply sale:", error);
-      setMessage({
-        type: "error",
-        text:
-          error?.response?.data?.message ||
-          error?.message ||
-          "Failed to create sale for outdoor supply.",
-      });
-    } finally {
-      setProcessingId("");
-    }
-  };
 
   const handleDeleteRequest = (supply) => {
     if (!canDelete || !supply?.id) return;
@@ -110,7 +123,7 @@ export default function OutdoorSupplyPage() {
   const handleConfirmDelete = () => {
     if (!deleteTarget?.id) return;
     deleteOutdoorSupply(deleteTarget.id);
-    syncSupplies();
+    syncData();
     setMessage({
       type: "success",
       text: `Outdoor supply deleted successfully for ${deleteTarget.supplierName || "Outdoor Supply"}.`,
@@ -185,19 +198,95 @@ export default function OutdoorSupplyPage() {
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
           <div>
+            <h3 className="text-lg font-semibold text-slate-900">Outdoor Supplier Table</h3>
+            <p className="text-sm text-slate-500">Saved outdoor supplier records appear here.</p>
+          </div>
+        </div>
+
+        {suppliers.length === 0 ? (
+          <div className="px-5 py-10 text-center">
+            <div className="mx-auto mb-3 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-50 text-sky-600">
+              <Store className="h-6 w-6" />
+            </div>
+            <p className="text-base font-semibold text-slate-900">No outdoor supplier saved yet.</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Add a supplier to keep their route, gari number and payment record here.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-slate-600">
+                  <th className="px-4 py-3 font-semibold">Supplier</th>
+                  <th className="px-4 py-3 font-semibold">Phone No.</th>
+                  <th className="px-4 py-3 font-semibold">Gari No.</th>
+                  <th className="px-4 py-3 font-semibold">Route</th>
+                  <th className="px-4 py-3 font-semibold">Monthly Pay</th>
+                  <th className="px-4 py-3 font-semibold">Commission</th>
+                  <th className="px-4 py-3 font-semibold text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {suppliers.map((supplier) => (
+                  <tr key={supplier.id} className="align-top">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-900">{supplier.supplierName || "-"}</p>
+                      {supplier.address ? (
+                        <p className="mt-1 text-xs text-slate-500">{supplier.address}</p>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">{supplier.phoneNo || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{supplier.gariNo || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{supplier.routeName || "-"}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900">
+                      {formatCurrency(supplier.monthlyPay)}
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-slate-900">
+                      {formatCurrency(supplier.commission)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end">
+                        <Link
+                          href={canEdit ? `/AdminDashboard/outdoor-supply/suppliers/new?id=${supplier.id}` : "#"}
+                          aria-disabled={!canEdit}
+                          onClick={(event) => {
+                            if (!canEdit) event.preventDefault();
+                          }}
+                          className={`inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-600 transition hover:bg-blue-50 ${blockedButtonClass}`}
+                          {...blockedButtonProps(canEdit)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Edit
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <div>
             <h3 className="text-lg font-semibold text-slate-900">Outdoor Supply Table</h3>
             <p className="text-sm text-slate-500">Every saved outdoor supply bill appears here.</p>
           </div>
         </div>
 
-        {supplies.length === 0 ? (
+        {resolvedSupplies.length === 0 ? (
           <div className="px-5 py-14 text-center">
             <div className="mx-auto mb-3 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-50 text-sky-600">
               <Save className="h-6 w-6" />
             </div>
             <p className="text-base font-semibold text-slate-900">No outdoor supply saved yet.</p>
             <p className="mt-1 text-sm text-slate-500">
-              Add a supplier and save a bill to see the table here.
+              {suppliers.length
+                ? "Supplier records are loaded above. Save an outdoor supply bill to see it here."
+                : "Add a supplier and save a bill to see the table here."}
             </p>
           </div>
         ) : (
@@ -216,7 +305,7 @@ export default function OutdoorSupplyPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {supplies.map((supply) => (
+                {resolvedSupplies.map((supply) => (
                   <tr key={supply.id} className="align-top">
                     <td className="px-4 py-3 text-slate-700">
                       {formatDateDDMMYYYY(supply.supplyDate || supply.createdAt)}
@@ -230,7 +319,7 @@ export default function OutdoorSupplyPage() {
                       {Array.isArray(supply.items) ? supply.items.length : 0}
                     </td>
                     <td className="px-4 py-3 font-semibold text-slate-900">
-                      {formatCurrency(supply.totalBill)}
+                      {formatCurrency(supply.resolvedTotalBill)}
                     </td>
                     <td className="px-4 py-3">
                       {supply.createdSaleId ? (
@@ -260,19 +349,6 @@ export default function OutdoorSupplyPage() {
                         >
                           <Trash2 className="h-4 w-4" />
                           Delete
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleCreateSale(supply)}
-                          disabled={Boolean(supply.createdSaleId) || processingId === supply.id}
-                          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          <ShoppingCart className="h-4 w-4" />
-                          {processingId === supply.id
-                            ? "Creating..."
-                            : supply.createdSaleId
-                            ? "Sale Created"
-                            : "Create Sale"}
                         </button>
                       </div>
                     </td>

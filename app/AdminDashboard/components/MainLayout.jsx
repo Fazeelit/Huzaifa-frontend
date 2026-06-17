@@ -75,6 +75,11 @@ const ROUTES = {
       icon: Truck,
       moduleKey: "PURCHASE",
     },
+  "/AdminDashboard/outdoor-supply-report": {
+      title: "Outdoor Supply Report",
+      icon: BarChart3,
+      moduleKey: "PURCHASE",
+    },
   "/AdminDashboard/suppliers": {
     title: "Suppliers",
     icon: Layers,
@@ -171,11 +176,12 @@ export default function MainLayout({ children }) {
   useEffect(() => {
     const loadAuth = () => {
       try {
+        const storedToken = readPersistedAuthValue("authToken");
         const storedRole = readPersistedAuthValue("role");
         const storedPermissionsRaw = readPersistedAuthValue("permissions");
         const storedPermissions = parsePermissions(storedPermissionsRaw);
 
-        if (!storedRole) {
+        if (!storedToken || !storedRole) {
           router.replace("/auth/login");
           return;
         }

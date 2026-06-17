@@ -96,6 +96,137 @@ const parseAmount = (value) => {
   return cleaned ? Number(cleaned) : 0;
 };
 
+const getSupplierPaymentHistoryCacheKey = (id) =>
+  `supplier-payment-history:${String(id || "").trim()}`;
+
+const readCachedSupplierPaymentHistory = (id) => {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(getSupplierPaymentHistoryCacheKey(id));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error("Read Supplier Payment History Cache Error:", error);
+    return [];
+  }
+};
+
+const normalizeSupplierLookupValue = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const buildSupplierLookupKeys = (supplierLike = {}) => {
+  const keys = [
+    supplierLike?.name,
+    supplierLike?.company,
+    supplierLike?.contactPerson,
+    supplierLike?.supplier,
+  ]
+    .map(normalizeSupplierLookupValue)
+    .filter(Boolean);
+
+  return [...new Set(keys)];
+};
+
+const getPurchaseQuantity = (product) => Number(product?.quantity ?? product?.qty ?? 0) || 0;
+const getPurchaseUnitPrice = (product) =>
+  parseAmount(product?.purchasePrice ?? product?.price ?? product?.unitPrice);
+
+const getNormalizedPurchaseAmounts = (purchase) => {
+  const products = Array.isArray(purchase?.products) ? purchase.products : [];
+  const derivedSubtotal = products.reduce(
+    (sum, product) => sum + getPurchaseQuantity(product) * getPurchaseUnitPrice(product),
+    0
+  );
+  const derivedTotal = derivedSubtotal + parseAmount(purchase?.taxAmount);
+  const rawTotal = parseAmount(purchase?.totalAmount ?? purchase?.totalPrice);
+  const rawPaid = parseAmount(purchase?.paidAmount);
+  const rawBalance = parseAmount(purchase?.balance);
+
+  if (rawTotal > 0 && derivedTotal > 1 && rawTotal < 1) {
+    const scale = derivedTotal / rawTotal;
+    const scaledPaid = rawPaid > 0 ? rawPaid * scale : 0;
+    const scaledBalance = rawBalance > 0 ? rawBalance * scale : Math.max(derivedTotal - scaledPaid, 0);
+
+    return {
+      totalAmount: derivedTotal,
+      paidAmount: scaledPaid,
+      balanceAmount: scaledBalance,
+    };
+  }
+
+  const totalAmount = rawTotal > 0 ? rawTotal : derivedTotal;
+  const paidAmount = rawPaid;
+  const balanceAmount = rawBalance > 0 ? rawBalance : Math.max(totalAmount - paidAmount, 0);
+
+  return {
+    totalAmount,
+    paidAmount,
+    balanceAmount,
+  };
+};
+
+const getSupplierAccountPendingAmount = (supplier, purchaseStats = null, matchedPurchases = []) => {
+  const supplierBills = Array.isArray(supplier?.bills) ? supplier.bills : [];
+  const totalRemainingFromBills = supplierBills.reduce((sum, bill) => {
+    const explicitRemaining = parseAmount(bill?.remainingAmount);
+    if (explicitRemaining > 0) {
+      return sum + explicitRemaining;
+    }
+
+    const billAmount = parseAmount(bill?.amount);
+    const billPaidAmount = parseAmount(bill?.paidAmount);
+    return sum + Math.max(billAmount - billPaidAmount, 0);
+  }, 0);
+  const totalDebitFromBills = supplierBills.reduce(
+    (sum, bill) => sum + parseAmount(bill?.amount),
+    0
+  );
+  const totalDebitFromPurchases = (Array.isArray(matchedPurchases) ? matchedPurchases : []).reduce(
+    (sum, purchase) => sum + getNormalizedPurchaseAmounts(purchase).totalAmount,
+    0
+  );
+  const supplierPaymentHistory = Array.isArray(supplier?.paymentHistory) ? supplier.paymentHistory : [];
+  const cachedPaymentHistory = readCachedSupplierPaymentHistory(supplier?.id);
+  const paymentHistory = cachedPaymentHistory.length > 0 ? cachedPaymentHistory : supplierPaymentHistory;
+  const totalCredit = paymentHistory.reduce((sum, payment) => sum + parseAmount(payment?.amount), 0);
+  const fallbackDebit =
+    parseAmount(purchaseStats?.totalAmount) ||
+    parseAmount(supplier?.statistics?.totalAmount);
+  if (supplierBills.length > 0) {
+    return Math.max(totalRemainingFromBills, 0);
+  }
+
+  const totalDebit =
+    totalDebitFromPurchases > 0
+      ? totalDebitFromPurchases
+      : totalDebitFromBills > 0
+        ? totalDebitFromBills
+        : fallbackDebit;
+
+  return Math.max(totalDebit - totalCredit, 0);
+};
+
+const getMatchedSupplierPurchases = (supplier, purchases = []) => {
+  const supplierLookupKeys = buildSupplierLookupKeys(supplier);
+  if (!supplierLookupKeys.length) return [];
+
+  return purchases.filter((purchase) => {
+    const purchaseLookupKeys = buildSupplierLookupKeys({
+      supplier: purchase?.supplier,
+      name: purchase?.supplierName,
+      company: purchase?.company,
+      contactPerson: purchase?.contactPerson,
+    });
+
+    return purchaseLookupKeys.some((key) => supplierLookupKeys.includes(key));
+  });
+};
+
 const getSupplierTimestamp = (supplier) => {
   const parsed = new Date(supplier?.createdAt || 0).getTime();
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -218,62 +349,57 @@ export default function SuppliersPage() {
     fetchPurchases();
   }, []);
 
-  const purchaseCountBySupplier = purchases.reduce((map, purchase) => {
-    const key = String(purchase.supplier || "").trim();
-    if (!key) return map;
-    map.set(key, (map.get(key) || 0) + 1);
-    return map;
-  }, new Map());
-
-  const purchaseStatsBySupplier = purchases.reduce((map, purchase) => {
-    const key = String(purchase.supplier || "").trim();
-    if (!key) return map;
-    const current = map.get(key) || {
-      totalBills: 0,
-      totalAmount: 0,
-      paidAmount: 0,
-      pendingAmount: 0,
-      lastPaymentDate: "",
-    };
-
-    const totalAmount = Number(purchase.totalAmount || 0);
-    const paidAmount = Number(purchase.paidAmount || 0);
-    const pendingAmount =
-      Number(purchase.balance || 0) ||
-      Math.max(totalAmount - paidAmount, 0);
-    const purchaseDate = String(purchase.purchaseDate || purchase.date || "").trim();
-
-    current.totalBills += 1;
-    current.totalAmount += totalAmount;
-    current.paidAmount += paidAmount;
-    current.pendingAmount += pendingAmount;
-    if (purchaseDate) {
-      if (!current.lastPaymentDate || new Date(purchaseDate) > new Date(current.lastPaymentDate)) {
-        current.lastPaymentDate = purchaseDate;
-      }
-    }
-
-    map.set(key, current);
-    return map;
-  }, new Map());
-
   const suppliersWithPurchaseCounts = suppliers.map((supplier) => {
-    const key = String(supplier.name || "").trim();
-    const purchaseStats = purchaseStatsBySupplier.get(key);
-    const purchaseCount = purchaseCountBySupplier.get(key) || 0;
+    const matchedPurchases = getMatchedSupplierPurchases(supplier, purchases);
+    const purchaseCount = matchedPurchases.length;
+    const purchaseStats =
+      matchedPurchases.length > 0
+        ? matchedPurchases.reduce(
+            (current, purchase) => {
+              const { totalAmount, paidAmount, balanceAmount } = getNormalizedPurchaseAmounts(purchase);
+              const purchaseDate = String(purchase.purchaseDate || purchase.date || "").trim();
+
+              current.totalBills += 1;
+              current.totalAmount += totalAmount;
+              current.paidAmount += paidAmount;
+              current.pendingAmount += balanceAmount;
+
+              if (purchaseDate) {
+                if (!current.lastPaymentDate || new Date(purchaseDate) > new Date(current.lastPaymentDate)) {
+                  current.lastPaymentDate = purchaseDate;
+                }
+              }
+
+              return current;
+            },
+            {
+              totalBills: 0,
+              totalAmount: 0,
+              paidAmount: 0,
+              pendingAmount: 0,
+              lastPaymentDate: "",
+            }
+          )
+        : null;
+    const accountPendingAmount = getSupplierAccountPendingAmount(
+      supplier,
+      purchaseStats,
+      matchedPurchases
+    );
 
     return {
       ...supplier,
-      purchaseCount,
-      purchaseStats: purchaseStats
-        ? {
+        purchaseCount,
+        accountPendingAmount,
+        purchaseStats: purchaseStats
+          ? {
             ...purchaseStats,
             totalAmount: formatRs(purchaseStats.totalAmount),
             paidAmount: formatRs(purchaseStats.paidAmount),
-            pendingAmount: formatRs(purchaseStats.pendingAmount),
+            pendingAmount: formatRs(accountPendingAmount),
           }
         : null,
-    };
+      };
   });
 
   // Filter suppliers
@@ -353,10 +479,7 @@ export default function SuppliersPage() {
           ? parseAmount(purchaseStats.paidAmount)
           : parseAmount(supplier.statistics.paidAmount);
 
-      totalPendingAmount +=
-        purchaseStats?.pendingAmount
-          ? parseAmount(purchaseStats.pendingAmount)
-          : parseAmount(supplier.statistics.pendingAmount);
+      totalPendingAmount += supplier.accountPendingAmount;
 
       if (supplierBills.length) {
         supplierBills.forEach((bill) => {
@@ -1483,7 +1606,9 @@ export default function SuppliersPage() {
                       </td>
                       <td className="px-3 py-2.5">
                         <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
-                          {supplier.purchaseStats?.pendingAmount ?? supplier.statistics.pendingAmount}
+                          {formatRs(
+                            supplier.accountPendingAmount
+                          )}
                         </span>
                       </td>
                       <td className="px-3 py-2.5">

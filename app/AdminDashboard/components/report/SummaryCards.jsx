@@ -83,6 +83,9 @@ const getSuppliersArray = (res) =>
     ? res.data.suppliers
     : getArray(res);
 
+const settledValue = (result, fallback) =>
+  result?.status === "fulfilled" ? result.value : fallback;
+
 const getCustomerPaymentHistory = (customer) =>
   Array.isArray(customer?.paymentHistory) ? customer.paymentHistory : [];
 
@@ -165,7 +168,7 @@ const SummaryCards = () => {
           customersRes,
           suppliersRes,
           supplierPaymentsRes,
-        ] = await Promise.all([
+        ] = await Promise.allSettled([
           canSaleView ? apiRequest("/sales") : Promise.resolve({ data: [] }),
           canExpenseView ? apiRequest("/expenses") : Promise.resolve({ data: [] }),
           canProductView ? apiRequest("/products") : Promise.resolve({ data: [] }),
@@ -182,17 +185,17 @@ const SummaryCards = () => {
             : Promise.resolve({ data: [] }),
         ]);
 
-         const sales = getArray(salesRes);
+         const sales = getArray(settledValue(salesRes, { data: [] }));
 
-         const expenses = getArray(expenseRes);
+         const expenses = getArray(settledValue(expenseRes, { data: [] }));
 
-         const products = getArray(productRes);
+         const products = getArray(settledValue(productRes, { data: [] }));
 
-         const purchases = getArray(purchaseRes);
+         const purchases = getArray(settledValue(purchaseRes, { data: [] }));
 
-         const customers = getCustomersArray(customersRes);
-         const suppliers = getSuppliersArray(suppliersRes);
-         const supplierPayments = getSupplierPaymentsArray(supplierPaymentsRes);
+         const customers = getCustomersArray(settledValue(customersRes, { customers: [] }));
+         const suppliers = getSuppliersArray(settledValue(suppliersRes, { data: [] }));
+         const supplierPayments = getSupplierPaymentsArray(settledValue(supplierPaymentsRes, { data: [] }));
 
         /* ================= TODAY FILTER ================= */
         const todaysSales = sales.filter((s) =>

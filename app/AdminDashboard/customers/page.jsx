@@ -146,6 +146,44 @@ const matchesCustomerSale = (sale, customer) => {
 
 const getSaleDateValue = (sale) => sale?.saleDate || sale?.createdAt || sale?.timestamp || null;
 
+const getReturnedSaleQuantity = (product = {}) =>
+  Math.max(
+    Number(
+      product?.returnedQuantity ??
+        product?.returnedQty ??
+        product?.returnQty ??
+        product?.quantityReturned ??
+        0
+    ) || 0,
+    0
+  );
+
+const getChargedSaleQuantity = (product = {}) =>
+  Math.max(
+    Number(product?.chargedQuantity ?? product?.quantity ?? product?.qty ?? 0) -
+      getReturnedSaleQuantity(product),
+    0
+  );
+
+const getInvoiceAmount = (quantity, unitPrice) =>
+  Number((Math.max(Number(quantity) || 0, 0) * (Number(unitPrice) || 0)).toFixed(2));
+
+const getCustomerSaleTotal = (sale = {}) => {
+  const invoiceTotal = (Array.isArray(sale?.products) ? sale.products : []).reduce(
+    (sum, product) =>
+      sum +
+      getInvoiceAmount(
+        getChargedSaleQuantity(product),
+        Number(product?.salePrice ?? product?.price ?? product?.retailSalePrice ?? 0)
+      ),
+    0
+  );
+
+  return Number(
+    Math.max(invoiceTotal - (Number(sale?.discount) || 0), 0).toFixed(2)
+  );
+};
+
 export default function Customers() {
   const [searchTerm, setSearchTerm] = useState("");
   const [customers, setCustomers] = useState([]);
@@ -236,7 +274,7 @@ export default function Customers() {
   const enrichedCustomers = customers.map((customer) => {
     const matchedSales = sales.filter((sale) => matchesCustomerSale(sale, customer));
     const totalSpent = matchedSales.reduce(
-      (sum, sale) => sum + (Number(sale?.totalAmount ?? sale?.total) || 0),
+      (sum, sale) => sum + getCustomerSaleTotal(sale),
       0
     );
     const latestSale = matchedSales

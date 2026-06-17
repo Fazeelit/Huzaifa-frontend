@@ -1,13 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Save, Store } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { usePermissions } from "../../authservice/usePermissions";
 import { blockedButtonClass, blockedButtonProps } from "../../authservice/permissions";
 import { formatPhoneInput } from "../../utils/formatting";
-import { saveOutdoorSupplier } from "../outdoorSupply/storage";
+import {
+  getOutdoorSupplierById,
+  saveOutdoorSupplier,
+  updateOutdoorSupplier,
+} from "../outdoorSupply/storage";
 
 const emptyForm = {
   supplierName: "",
@@ -22,9 +26,30 @@ const emptyForm = {
 
 export default function NewOutdoorSupplierPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { crud } = usePermissions();
-  const { canCreate } = crud("PURCHASE");
-  const [form, setForm] = useState(emptyForm);
+  const { canCreate, canEdit } = crud("PURCHASE");
+  const supplierId = searchParams.get("id");
+  const initialSupplier = useMemo(
+    () => (supplierId ? getOutdoorSupplierById(supplierId) : null),
+    [supplierId]
+  );
+  const isEditMode = Boolean(initialSupplier?.id);
+  const canSubmit = isEditMode ? canEdit : canCreate;
+  const [form, setForm] = useState(() =>
+    initialSupplier
+      ? {
+          supplierName: initialSupplier.supplierName || "",
+          phoneNo: initialSupplier.phoneNo || "",
+          gariNo: initialSupplier.gariNo || "",
+          routeName: initialSupplier.routeName || "",
+          monthlyPay: String(initialSupplier.monthlyPay ?? ""),
+          commission: String(initialSupplier.commission ?? ""),
+          address: initialSupplier.address || "",
+          notes: initialSupplier.notes || "",
+        }
+      : emptyForm
+  );
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
 
@@ -49,12 +74,21 @@ export default function NewOutdoorSupplierPage() {
     event.preventDefault();
     if (!validate()) return;
 
-    saveOutdoorSupplier({
+    const payload = {
       ...form,
+      id: initialSupplier?.id,
+      createdAt: initialSupplier?.createdAt,
       monthlyPay: Number(form.monthlyPay || 0),
       commission: Number(form.commission || 0),
-    });
-    setMessage("Outdoor supplier saved successfully.");
+    };
+
+    if (isEditMode) {
+      updateOutdoorSupplier(initialSupplier.id, payload);
+    } else {
+      saveOutdoorSupplier(payload);
+    }
+
+    setMessage(isEditMode ? "Outdoor supplier updated successfully." : "Outdoor supplier saved successfully.");
     setTimeout(() => {
       router.push("/AdminDashboard/outdoor-supply");
     }, 900);
@@ -71,9 +105,13 @@ export default function NewOutdoorSupplierPage() {
             <ArrowLeft className="h-4 w-4" />
             Back to Outdoor Supply
           </Link>
-          <h2 className="text-2xl font-bold text-slate-900">New Outdoor Supplier</h2>
+          <h2 className="text-2xl font-bold text-slate-900">
+            {isEditMode ? "Edit Outdoor Supplier" : "New Outdoor Supplier"}
+          </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Add supplier details like phone number, gari number, route and payment information.
+            {isEditMode
+              ? "Update supplier details like phone number, gari number, route and payment information."
+              : "Add supplier details like phone number, gari number, route and payment information."}
           </p>
         </div>
       </div>
@@ -187,11 +225,11 @@ export default function NewOutdoorSupplierPage() {
           <button
             type="submit"
             className={`inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 ${blockedButtonClass}`}
-            {...blockedButtonProps(canCreate)}
+            {...blockedButtonProps(canSubmit)}
           >
             <Store className="h-4 w-4" />
             <Save className="h-4 w-4" />
-            Save Outdoor Supplier
+            {isEditMode ? "Update Outdoor Supplier" : "Save Outdoor Supplier"}
           </button>
         </div>
       </form>

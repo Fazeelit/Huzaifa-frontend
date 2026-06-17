@@ -29,7 +29,6 @@ const parseAmount = (value) => {
 };
 
 const formatRs = (value) => `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
-const CRUD_CACHE_KEY = "appCrudResponseCache";
 
 const formatDate = (value) => {
   if (!value) return "N/A";
@@ -93,6 +92,13 @@ const getTransactionSortValue = (timestamp, fallbackDate = "") => {
   return 0;
 };
 
+const getTransactionTypePriority = (type) => {
+  const normalized = String(type || "").trim().toLowerCase();
+  if (normalized === "payment") return 1;
+  if (normalized === "bill") return 0;
+  return -1;
+};
+
 const getSalePaymentStatus = (paidAmount, totalAmount) => {
   const paid = Number(paidAmount || 0);
   const total = Number(totalAmount || 0);
@@ -127,11 +133,6 @@ const stripSaleMetaFields = (sale) => {
   return requestBody;
 };
 
-const getEntityTimestamp = (entry) => {
-  const value = new Date(entry?.updatedAt || entry?.createdAt || entry?.saleDate || 0).getTime();
-  return Number.isFinite(value) ? value : 0;
-};
-
 const extractSalesArray = (response) =>
   Array.isArray(response?.data)
     ? response.data
@@ -141,62 +142,42 @@ const extractSalesArray = (response) =>
         ? response
         : [];
 
-const hasClaimStatus = (sale) =>
-  (Array.isArray(sale?.items) ? sale.items : Array.isArray(sale?.products) ? sale.products : []).some(
-    (item) => String(item?.status || "").trim().toUpperCase() === "CLAIM",
+const getReturnedSaleQuantity = (item = {}) =>
+  Math.max(
+    Number(
+      item?.returnedQuantity ??
+        item?.returnedQty ??
+        item?.returnQty ??
+        item?.quantityReturned ??
+        0
+    ) || 0,
+    0
   );
 
-const readCachedSales = () => {
-  if (typeof window === "undefined") {
-    return [];
-  }
+const getChargedSaleQuantity = (item = {}) =>
+  Math.max(
+    Number(item?.chargedQuantity ?? item?.quantity ?? item?.qty ?? 0) -
+      getReturnedSaleQuantity(item),
+    0
+  );
 
-  try {
-    const raw = window.localStorage.getItem(CRUD_CACHE_KEY);
-    if (!raw) {
-      return [];
-    }
+const getInvoiceAmount = (quantity, unitPrice) =>
+  Number((Math.max(Number(quantity) || 0, 0) * (Number(unitPrice) || 0)).toFixed(2));
 
-    const parsed = JSON.parse(raw);
-    return extractSalesArray(parsed?.["/sales"]);
-  } catch {
-    return [];
-  }
-};
+const getCustomerSaleTotal = (sale = {}) => {
+  const invoiceTotal = (Array.isArray(sale?.products) ? sale.products : []).reduce(
+    (sum, item) =>
+      sum +
+      getInvoiceAmount(
+        getChargedSaleQuantity(item),
+        Number(item?.salePrice ?? item?.price ?? item?.retailSalePrice ?? 0)
+      ),
+    0
+  );
 
-const mergeLatestSales = (networkSales) => {
-  const cachedSales = readCachedSales();
-  if (!cachedSales.length) {
-    return networkSales;
-  }
-
-  const cachedByKey = new Map();
-  cachedSales.forEach((sale) => {
-    const keys = [sale?._id, sale?.invoiceNo, sale?.invoiceNumber]
-      .map((value) => String(value || "").trim())
-      .filter(Boolean);
-
-    keys.forEach((key) => {
-      cachedByKey.set(key, sale);
-    });
-  });
-
-  return networkSales.map((sale) => {
-    const keys = [sale?._id, sale?.invoiceNo, sale?.invoiceNumber]
-      .map((value) => String(value || "").trim())
-      .filter(Boolean);
-
-    const cachedSale = keys.map((key) => cachedByKey.get(key)).find(Boolean);
-    if (!cachedSale) {
-      return sale;
-    }
-
-    if (hasClaimStatus(cachedSale) && !hasClaimStatus(sale)) {
-      return cachedSale;
-    }
-
-    return getEntityTimestamp(cachedSale) > getEntityTimestamp(sale) ? cachedSale : sale;
-  });
+  return Number(
+    Math.max(invoiceTotal - (Number(sale?.discount) || 0), 0).toFixed(2)
+  );
 };
 
 const matchesCustomerSale = (sale, customer) => {
@@ -352,8 +333,7 @@ export default function CustomerDetailPage() {
         const normalizedCustomer = normalizeCustomer(customerResponse.customer);
         setCustomer(normalizedCustomer);
 
-        const salesArray = mergeLatestSales(extractSalesArray(salesResponse));
-
+        const salesArray = extractSalesArray(salesResponse);
         setCustomerSales(salesArray.filter((sale) => matchesCustomerSale(sale, normalizedCustomer)));
       } else {
         setCustomer(null);
@@ -407,7 +387,7 @@ export default function CustomerDetailPage() {
     });
 
     return customerSales.map((sale, index) => {
-      const totalAmount = Number(sale?.totalAmount || sale?.total || 0);
+      const totalAmount = Number(sale?.totalAmount ?? sale?.total ?? getCustomerSaleTotal(sale) ?? 0);
       const matchedStoredBill = getEntryMatchKeys(sale?._id, sale?.invoiceNo, sale?.invoiceNumber)
         .map((key) => sourceBillsByKey.get(key))
         .find(Boolean);
@@ -495,6 +475,8 @@ export default function CustomerDetailPage() {
   }))].sort((a, b) => {
     const dateDiff = (getNormalizedDateValue(b.date) ?? 0) - (getNormalizedDateValue(a.date) ?? 0);
     if (dateDiff !== 0) return dateDiff;
+    const typePriorityDiff = getTransactionTypePriority(b.type) - getTransactionTypePriority(a.type);
+    if (typePriorityDiff !== 0) return typePriorityDiff;
     const timestampDiff =
       getTransactionSortValue(b.transactionTimestamp, b.date) -
       getTransactionSortValue(a.transactionTimestamp, a.date);
@@ -506,6 +488,8 @@ export default function CustomerDetailPage() {
   const chronologicalTransactions = [...transactionFeed].sort((a, b) => {
     const dateDiff = (getNormalizedDateValue(a.date) ?? 0) - (getNormalizedDateValue(b.date) ?? 0);
     if (dateDiff !== 0) return dateDiff;
+    const typePriorityDiff = getTransactionTypePriority(a.type) - getTransactionTypePriority(b.type);
+    if (typePriorityDiff !== 0) return typePriorityDiff;
     const timestampDiff =
       getTransactionSortValue(a.transactionTimestamp, a.date) -
       getTransactionSortValue(b.transactionTimestamp, b.date);
@@ -522,6 +506,8 @@ export default function CustomerDetailPage() {
   }).sort((a, b) => {
     const dateDiff = (getNormalizedDateValue(b.date) ?? 0) - (getNormalizedDateValue(a.date) ?? 0);
     if (dateDiff !== 0) return dateDiff;
+    const typePriorityDiff = getTransactionTypePriority(b.type) - getTransactionTypePriority(a.type);
+    if (typePriorityDiff !== 0) return typePriorityDiff;
     const timestampDiff =
       getTransactionSortValue(b.transactionTimestamp, b.date) -
       getTransactionSortValue(a.transactionTimestamp, a.date);
@@ -543,6 +529,11 @@ export default function CustomerDetailPage() {
     ...entry,
     balance: Math.max(0, Number(entry.balance || 0) + Number(blankBillDebit || 0)),
   }));
+  const latestBillBalance = Number(
+    adjustedFilteredTransactions.find((entry) => String(entry?.type || "").toLowerCase() === "bill")?.balance ||
+      adjustedFilteredTransactions?.[0]?.balance ||
+      0
+  );
   const blankBillRow = {
     id: "blank-bill-row",
     type: "remaining bill",
@@ -602,6 +593,21 @@ export default function CustomerDetailPage() {
 
     if (response?.success && response?.customer) {
       setCustomer(normalizeCustomer(response.customer));
+      return true;
+    }
+
+    if (response?.success) {
+      setCustomer((prev) =>
+        prev
+          ? normalizeCustomer({
+              ...prev,
+              bills: nextBills,
+              paymentHistory: nextPayments,
+              totalDue: nextTotalDue,
+              lastPurchase: prev?.lastPurchase || "",
+            })
+          : prev
+      );
       return true;
     }
 
@@ -676,7 +682,7 @@ export default function CustomerDetailPage() {
       method: entry.method || "Cash",
       reference: getBillReferenceValue(linkedBill || entry),
       date: entry.date || new Date().toISOString().split("T")[0],
-      partialAmount: String(Number(entry.credit || 0)),
+      partialAmount: String(Number(entry.balance || 0)),
     });
   };
 
@@ -753,6 +759,7 @@ export default function CustomerDetailPage() {
     }
 
     const linkedSale = findLinkedSale(editTransactionTarget);
+    let resolvedEditedSale = null;
     if (linkedSale?._id) {
       const salePaymentHistory = Array.isArray(linkedSale.paymentHistory) ? [...linkedSale.paymentHistory] : [];
       const salePaymentIndex = salePaymentHistory.findIndex((payment) => {
@@ -790,6 +797,18 @@ export default function CustomerDetailPage() {
         setIsSavingEditedPayment(false);
         return;
       }
+
+      resolvedEditedSale = {
+        ...linkedSale,
+        ...stripSaleMetaFields({
+          ...linkedSale,
+          paidAmount: nextPaidAmount,
+          cashReceived: nextPaidAmount,
+          paymentHistory: nextSalePaymentHistory,
+          paymentStatus: getSalePaymentStatus(nextPaidAmount, totalAmount),
+        }),
+        ...(saleUpdateResponse?.sale || saleUpdateResponse?.data || {}),
+      };
     }
 
     const saved = await persistCustomerLedger(currentBills, nextPayments);
@@ -799,7 +818,15 @@ export default function CustomerDetailPage() {
       return;
     }
 
-    await loadCustomerData({ silent: true });
+    if (resolvedEditedSale?._id) {
+      setCustomerSales((prev) =>
+        prev.map((sale) =>
+          String(sale?._id || "") === String(resolvedEditedSale?._id || "")
+            ? { ...sale, ...resolvedEditedSale }
+            : sale
+        )
+      );
+    }
     setEditTransactionTarget(null);
     setIsSavingEditedPayment(false);
   };
@@ -1001,34 +1028,62 @@ export default function CustomerDetailPage() {
     const updatedSalesMap = new Map();
 
     if (selectedBill?.source === "customer-total") {
-      let remainingToAllocate = paidAmount;
       const sortedBills = [...displayBills]
-        .filter((bill) => bill.remainingAmountNumber > 0)
+        .filter((entry) => Number(entry?.remainingAmountNumber || 0) > 0)
         .sort(
           (a, b) =>
             getTransactionSortValue(a.transactionTimestamp, a.date) -
             getTransactionSortValue(b.transactionTimestamp, b.date)
         );
+      const totalAllocatableAmount = sortedBills.reduce((sum, billEntry) => {
+        const linkedSale = findLinkedSale(billEntry);
+        const billRemaining = Math.max(Number(billEntry?.remainingAmountNumber || 0), 0);
+        const linkedSaleRemaining = linkedSale?._id
+          ? Math.max(Number(linkedSale?.totalAmount || 0) - Number(linkedSale?.paidAmount || 0), 0)
+          : billRemaining;
+        return sum + Math.min(billRemaining, linkedSaleRemaining);
+      }, 0);
 
-      for (const bill of sortedBills) {
+      if (paidAmount > totalAllocatableAmount) {
+        alert("Paid amount cannot exceed remaining amount");
+        return;
+      }
+
+      let remainingToAllocate = paidAmount;
+
+      for (const billEntry of sortedBills) {
         if (remainingToAllocate <= 0) break;
-        const allocatedAmount = Math.min(bill.remainingAmountNumber, remainingToAllocate);
-        const targetIndex = currentBills.findIndex((entry) => String(entry?.id || "") === String(bill.id));
+
+        const targetIndex = currentBills.findIndex(
+          (entry) => String(entry?.id || "") === String(billEntry?.id || "")
+        );
         if (targetIndex < 0) continue;
 
-        const linkedSale = findLinkedSale(bill);
+        const currentPaid = parseAmount(currentBills[targetIndex]?.paidAmount);
+        const billAmount = parseAmount(currentBills[targetIndex]?.amount);
+        const billRemaining = Math.max(billAmount - currentPaid, 0);
+        if (billRemaining <= 0) continue;
+
+        const linkedSale = findLinkedSale(billEntry);
+        const linkedSaleRemaining = linkedSale?._id
+          ? Math.max(Number(linkedSale?.totalAmount || 0) - Number(linkedSale?.paidAmount || 0), 0)
+          : billRemaining;
+        const allocatableAmount = Math.min(remainingToAllocate, billRemaining, linkedSaleRemaining);
+
+        if (allocatableAmount <= 0) continue;
+
         if (linkedSale?._id) {
           const salePaymentResponse = await apiRequest(`/sales/${linkedSale._id}/payment`, {
             method: "POST",
             data: {
-              paidAmount: allocatedAmount,
+              paidAmount: allocatableAmount,
               paymentMethod: paymentForm.method,
               paymentDate,
             },
           });
 
           if (!salePaymentResponse?.success) {
-            alert(salePaymentResponse?.message || `Failed to record payment for bill ${bill.reference || bill.id}.`);
+            alert(salePaymentResponse?.message || `Failed to record payment for bill ${billEntry.reference || billEntry.id}.`);
             return;
           }
 
@@ -1043,10 +1098,7 @@ export default function CustomerDetailPage() {
           }
         }
 
-        const currentPaid = parseAmount(currentBills[targetIndex]?.paidAmount);
-        const nextPaid = currentPaid + allocatedAmount;
-        const billAmount = parseAmount(currentBills[targetIndex]?.amount);
-
+        const nextPaid = Math.min(currentPaid + allocatableAmount, billAmount);
         currentBills[targetIndex] = {
           ...currentBills[targetIndex],
           paidAmount: formatRs(nextPaid),
@@ -1056,14 +1108,19 @@ export default function CustomerDetailPage() {
         currentPayments.unshift({
           id: `PAY-${Date.now().toString().slice(-6)}-${targetIndex}`,
           date: paymentDate,
-          amount: formatRs(allocatedAmount),
+          amount: formatRs(allocatableAmount),
           method: paymentForm.method,
           reference: getBillReferenceValue(currentBills[targetIndex]),
           billId: getBillReferenceValue(currentBills[targetIndex]),
           notes: "",
         });
 
-        remainingToAllocate -= allocatedAmount;
+        remainingToAllocate -= allocatableAmount;
+      }
+
+      if (remainingToAllocate > 0) {
+        alert("Payment amount cannot exceed remaining amount.");
+        return;
       }
     } else {
       const targetIndex = currentBills.findIndex(
@@ -1076,7 +1133,27 @@ export default function CustomerDetailPage() {
       }
 
       const linkedSale = findLinkedSale(selectedBill);
+      const currentPaid = parseAmount(currentBills[targetIndex]?.paidAmount);
+      const billAmount = parseAmount(currentBills[targetIndex]?.amount);
+      const billRemaining = Math.max(billAmount - currentPaid, 0);
+
+      if (paidAmount > billRemaining) {
+        alert("Paid amount cannot exceed remaining amount");
+        return;
+      }
+
       if (linkedSale?._id) {
+        const linkedSaleRemaining = Math.max(
+          Number(linkedSale?.totalAmount || 0) - Number(linkedSale?.paidAmount || 0),
+          0
+        );
+        const allowedAmount = Math.min(billRemaining, linkedSaleRemaining);
+
+        if (paidAmount > allowedAmount) {
+          alert("Paid amount cannot exceed remaining amount");
+          return;
+        }
+
         const salePaymentResponse = await apiRequest(`/sales/${linkedSale._id}/payment`, {
           method: "POST",
           data: {
@@ -1102,8 +1179,6 @@ export default function CustomerDetailPage() {
         }
       }
 
-      const currentPaid = parseAmount(currentBills[targetIndex]?.paidAmount);
-      const billAmount = parseAmount(currentBills[targetIndex]?.amount);
       const nextPaid = currentPaid + paidAmount;
 
       currentBills[targetIndex] = {
@@ -1264,7 +1339,7 @@ export default function CustomerDetailPage() {
             </div>
             <div className="rounded-2xl bg-emerald-50 px-4 py-3 dark:bg-emerald-900/20">
               <p className="text-xs text-emerald-700 dark:text-emerald-300">Total Spent</p>
-              <p className="text-lg font-bold text-emerald-900 dark:text-white">{formatRs(customer.totalSpent)}</p>
+              <p className="text-lg font-bold text-emerald-900 dark:text-white">{formatRs(totalBillAmount)}</p>
             </div>
             <div className="rounded-2xl bg-amber-50 px-4 py-3 dark:bg-amber-900/20">
               <p className="text-xs text-amber-700 dark:text-amber-300">Outstanding</p>
@@ -1601,11 +1676,11 @@ export default function CustomerDetailPage() {
               <h3 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">Edit Payment</h3>
               <form onSubmit={handleEditPaymentTransaction} className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Bill ID</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Balance</label>
                   <input
                     type="text"
                     readOnly
-                    value={editTransactionTarget.billId || editTransactionTarget.reference || "N/A"}
+                    value={formatRs(editTransactionTarget.balance || 0)}
                     className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
                   />
                 </div>
@@ -1688,7 +1763,7 @@ export default function CustomerDetailPage() {
               <p className="text-sm text-gray-800 dark:text-gray-200">
                 Are you sure want to Delete payment{" "}
                 <span className="font-semibold">{deleteTransactionTarget.reference || deleteTransactionTarget.id || "N/A"}</span>
-                ? Yes/No
+                ?
               </p>
             </div>
 
@@ -1722,7 +1797,7 @@ export default function CustomerDetailPage() {
               <form onSubmit={handleRecordPayment} className="space-y-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Balance (Debit - Credit, if credit is empty then 0)</label>
-                  <input type="text" readOnly value={formatRs(selectedBill.remainingAmountNumber)} className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700" />
+                  <input type="text" readOnly value={formatRs(latestBillBalance)} className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700" />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Add Payment</label>
