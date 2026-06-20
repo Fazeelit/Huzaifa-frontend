@@ -6,7 +6,6 @@ import autoTable from "jspdf-autotable";
 import { BarChart3, CalendarRange, FileDown, Package, TrendingUp, Truck } from "lucide-react";
 import { apiRequest } from "../../authservice/api";
 import { hasPermission, parseStoredPermissions } from "../../authservice/permissions";
-import { getOutdoorSuppliers, getOutdoorSupplies } from "../outdoorSupply/storage";
 import { formatDateDDMMYYYY } from "../../utils/formatting";
 
 const formatCurrency = (value) =>
@@ -212,9 +211,37 @@ export default function OutdoorSupplyReportPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const syncSupplies = () => {
-      setOutdoorSuppliers(getOutdoorSuppliers());
-      setOutdoorSupplies(getOutdoorSupplies());
+    const fetchOutdoorData = async () => {
+      try {
+        const [suppliersResponse, suppliesResponse] = await Promise.all([
+          apiRequest("/outdoor-supply-management/suppliers", {
+            method: "GET",
+            suppressErrorToast: true,
+          }),
+          apiRequest("/outdoor-supply-management", {
+            method: "GET",
+            suppressErrorToast: true,
+          }),
+        ]);
+
+        const supplierRows = Array.isArray(suppliersResponse?.data)
+          ? suppliersResponse.data
+          : Array.isArray(suppliersResponse)
+            ? suppliersResponse
+            : [];
+        const supplyRows = Array.isArray(suppliesResponse?.data)
+          ? suppliesResponse.data
+          : Array.isArray(suppliesResponse)
+            ? suppliesResponse
+            : [];
+
+        setOutdoorSuppliers(supplierRows);
+        setOutdoorSupplies(supplyRows);
+      } catch (error) {
+        console.error("Failed to fetch outdoor supply report data:", error);
+        setOutdoorSuppliers([]);
+        setOutdoorSupplies([]);
+      }
     };
 
     const fetchSales = async () => {
@@ -253,14 +280,11 @@ export default function OutdoorSupplyReportPage() {
 
     const load = async () => {
       setLoading(true);
-      syncSupplies();
-      await Promise.all([fetchProducts(), fetchSales()]);
+      await Promise.all([fetchOutdoorData(), fetchProducts(), fetchSales()]);
       setLoading(false);
     };
 
     load();
-    window.addEventListener("storage", syncSupplies);
-    return () => window.removeEventListener("storage", syncSupplies);
   }, []);
 
   const reportData = useMemo(() => {

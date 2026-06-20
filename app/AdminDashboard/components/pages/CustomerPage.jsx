@@ -38,8 +38,27 @@ const tagFilters = [
 
 const toNumber = (value) => {
   if (typeof value === "number") return value;
-  return parseFloat(String(value || "").replace(/[^\d.]/g, "")) || 0;
+  const normalized = String(value || "").replace(/,/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
 };
+
+const REMAINING_BILL_MARKER = "__remaining_bill__";
+
+const getCustomerBillsPendingAmount = (customer = {}) =>
+  (Array.isArray(customer?.bills) ? customer.bills : []).reduce((sum, bill) => {
+    if (bill?.status === "paid") return sum;
+    return sum + Math.max(toNumber(bill?.amount) - toNumber(bill?.paidAmount), 0);
+  }, 0);
+
+const getRemainingBillDebit = (payments = []) =>
+  (Array.isArray(payments) ? payments : []).reduce((sum, payment) => {
+    if (String(payment?.notes || "").trim() !== REMAINING_BILL_MARKER) {
+      return sum;
+    }
+
+    return sum + toNumber(payment?.paidAmount ?? payment?.amount);
+  }, 0);
 
 const formatDate = (value) => {
   if (!value) return "";
@@ -91,12 +110,22 @@ const normalizeCustomer = (customer) => ({
   purchaseCount: Number(customer.totalPurchases ?? customer.orders ?? 0) || 0,
   totalSpent: toNumber(customer.totalSpent),
   totalDue: toNumber(customer.totalDue),
+  accountBalance: toNumber(customer.accountBalance),
+  pendingAmount: toNumber(customer.pendingAmount),
+  balance: toNumber(customer.balance),
   lastPurchase: customer.lastPurchase || "No purchases yet",
   tags: Array.isArray(customer.tags) ? customer.tags : [],
   status: String(customer.status || "active").toLowerCase(),
   satisfaction: Number(customer.satisfaction) || 0,
   bills: Array.isArray(customer.bills) ? customer.bills : [],
   paymentHistory: Array.isArray(customer.paymentHistory) ? customer.paymentHistory : [],
+  exactPendingAmount: toNumber(
+    customer.exactPendingAmount ??
+      customer.totalDue ??
+      customer.accountBalance ??
+      customer.pendingAmount ??
+      customer.balance
+  ),
   statistics: calculateCustomerStatistics(customer),
 });
 
@@ -160,7 +189,70 @@ export default function Customers() {
       try {
         const res = await apiRequest("/customers", { method: "GET" });
         if (res.success) {
-          setCustomers((res.customers || []).map(normalizeCustomer));
+          const baseCustomers = (res.customers || []).map(normalizeCustomer);
+          const refreshedCustomers = await Promise.all(
+            baseCustomers.map(async (customer) => {
+              const customerId = String(customer?.id || "").trim();
+              if (!customerId) {
+                return customer;
+              }
+
+              try {
+                const detailResponse = await apiRequest(`/customers/${customerId}`, {
+                  method: "GET",
+                  suppressErrorToast: true,
+                  suppressErrorLog: true,
+                });
+
+                if (detailResponse?.success && detailResponse?.customer) {
+                  const paymentsResponse = await apiRequest(
+                    `/customerpayments/getCustomerPaymentsByCustomer/${customerId}`,
+                    {
+                      method: "GET",
+                      suppressErrorToast: true,
+                      suppressErrorLog: true,
+                    }
+                  );
+                  const customerPayments = Array.isArray(paymentsResponse?.customerpayments)
+                    ? paymentsResponse.customerpayments
+                    : Array.isArray(paymentsResponse?.data?.customerpayments)
+                      ? paymentsResponse.data.customerpayments
+                      : Array.isArray(paymentsResponse?.data)
+                        ? paymentsResponse.data
+                        : Array.isArray(paymentsResponse)
+                          ? paymentsResponse
+                          : [];
+                  const mergedCustomer = {
+                    ...customer,
+                    ...detailResponse.customer,
+                  };
+                  const latestPendingAmount = Math.max(
+                    toNumber(mergedCustomer?.totalDue),
+                    toNumber(mergedCustomer?.accountBalance),
+                    toNumber(mergedCustomer?.pendingAmount),
+                    toNumber(mergedCustomer?.balance),
+                    getCustomerBillsPendingAmount(mergedCustomer) + getRemainingBillDebit(customerPayments),
+                    0
+                  );
+
+                  return normalizeCustomer({
+                    ...mergedCustomer,
+                    totalDue: latestPendingAmount,
+                    accountBalance: latestPendingAmount,
+                    pendingAmount: latestPendingAmount,
+                    balance: latestPendingAmount,
+                    exactPendingAmount: latestPendingAmount,
+                  });
+                }
+              } catch {
+                // Keep list rendering even if one customer detail refresh fails.
+              }
+
+              return customer;
+            })
+          );
+
+          setCustomers(refreshedCustomers);
         } else {
           console.error("Failed to fetch customers:", res.message);
         }
@@ -170,6 +262,28 @@ export default function Customers() {
     };
 
     fetchCustomers();
+
+    const handleFocus = () => {
+      fetchCustomers();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchCustomers();
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      fetchCustomers();
+    }, 15000);
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   const filteredCustomers = customers

@@ -1,17 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Save, Store } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle, LoaderCircle, Save, Store, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { apiRequest } from "../../authservice/api";
 import { usePermissions } from "../../authservice/usePermissions";
 import { blockedButtonClass, blockedButtonProps } from "../../authservice/permissions";
 import { formatPhoneInput } from "../../utils/formatting";
-import {
-  getOutdoorSupplierById,
-  saveOutdoorSupplier,
-  updateOutdoorSupplier,
-} from "../outdoorSupply/storage";
 
 const emptyForm = {
   supplierName: "",
@@ -30,28 +26,55 @@ export default function NewOutdoorSupplierPage() {
   const { crud } = usePermissions();
   const { canCreate, canEdit } = crud("PURCHASE");
   const supplierId = searchParams.get("id");
-  const initialSupplier = useMemo(
-    () => (supplierId ? getOutdoorSupplierById(supplierId) : null),
-    [supplierId]
-  );
+  const initialSupplier = useMemo(() => null, []);
   const isEditMode = Boolean(initialSupplier?.id);
-  const canSubmit = isEditMode ? canEdit : canCreate;
-  const [form, setForm] = useState(() =>
-    initialSupplier
-      ? {
-          supplierName: initialSupplier.supplierName || "",
-          phoneNo: initialSupplier.phoneNo || "",
-          gariNo: initialSupplier.gariNo || "",
-          routeName: initialSupplier.routeName || "",
-          monthlyPay: String(initialSupplier.monthlyPay ?? ""),
-          commission: String(initialSupplier.commission ?? ""),
-          address: initialSupplier.address || "",
-          notes: initialSupplier.notes || "",
-        }
-      : emptyForm
-  );
+  const canSubmit = supplierId ? canEdit : canCreate;
+  const [form, setForm] = useState(emptyForm);
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(Boolean(supplierId));
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [modalMessage, setModalMessage] = useState("");
+  const [editingSupplier, setEditingSupplier] = useState(null);
+
+  useEffect(() => {
+    const loadSupplier = async () => {
+      if (!supplierId) return;
+
+      try {
+        setIsLoading(true);
+        const response = await apiRequest(`/outdoor-supply-management/suppliers/${supplierId}`, {
+          method: "GET",
+          suppressErrorToast: true,
+        });
+        const supplier = response?.data || response;
+        setEditingSupplier(supplier);
+        setForm({
+          supplierName: supplier?.supplierName || "",
+          phoneNo: supplier?.phoneNo || "",
+          gariNo: supplier?.gariNo || "",
+          routeName: supplier?.routeName || "",
+          monthlyPay: String(supplier?.monthlyPay ?? ""),
+          commission: String(supplier?.commission ?? ""),
+          address: supplier?.address || "",
+          notes: supplier?.notes || "",
+        });
+      } catch (error) {
+        const nextMessage =
+          error?.response?.data?.message ||
+          error?.message ||
+          "Failed to load outdoor supplier.";
+        setModalMessage(nextMessage);
+        setShowErrorModal(true);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadSupplier();
+  }, [supplierId]);
 
   const setField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -70,29 +93,71 @@ export default function NewOutdoorSupplierPage() {
     return Object.keys(nextErrors).length === 0;
   };
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
     if (!validate()) return;
 
     const payload = {
       ...form,
-      id: initialSupplier?.id,
-      createdAt: initialSupplier?.createdAt,
       monthlyPay: Number(form.monthlyPay || 0),
       commission: Number(form.commission || 0),
     };
 
-    if (isEditMode) {
-      updateOutdoorSupplier(initialSupplier.id, payload);
-    } else {
-      saveOutdoorSupplier(payload);
-    }
+    try {
+      setIsSubmitting(true);
+      setShowErrorModal(false);
+      setShowSuccessModal(false);
+      setModalMessage("");
 
-    setMessage(isEditMode ? "Outdoor supplier updated successfully." : "Outdoor supplier saved successfully.");
-    setTimeout(() => {
-      router.push("/AdminDashboard/outdoor-supply");
-    }, 900);
+      if (supplierId) {
+        await apiRequest(`/outdoor-supply-management/updateOutdoorSupplier/${supplierId}`, {
+          method: "PUT",
+          data: payload,
+        });
+      } else {
+        await apiRequest("/outdoor-supply-management/createOutdoorSupplier", {
+          method: "POST",
+          data: payload,
+        });
+      }
+
+      const successMessage = supplierId
+        ? "Outdoor supplier updated successfully."
+        : "Outdoor supplier saved successfully.";
+
+      setMessage(successMessage);
+      setModalMessage(successMessage);
+      setShowSuccessModal(true);
+    } catch (error) {
+      const nextMessage =
+        error?.response?.data?.message ||
+        error?.message ||
+        "Failed to save outdoor supplier.";
+      setModalMessage(nextMessage);
+      setShowErrorModal(true);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  const handleSuccessClose = () => {
+    setShowSuccessModal(false);
+    const nextPath = supplierId
+      ? "/AdminDashboard/outdoor-supply"
+      : `/AdminDashboard/outdoor-supply?success=1&message=${encodeURIComponent(modalMessage)}`;
+    router.push(nextPath);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+        <div className="flex items-center gap-3 text-slate-600">
+          <LoaderCircle className="h-5 w-5 animate-spin" />
+          Loading outdoor supplier...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-5 pb-6">
@@ -106,10 +171,10 @@ export default function NewOutdoorSupplierPage() {
             Back to Outdoor Supply
           </Link>
           <h2 className="text-2xl font-bold text-slate-900">
-            {isEditMode ? "Edit Outdoor Supplier" : "New Outdoor Supplier"}
+            {supplierId ? "Edit Outdoor Supplier" : "New Outdoor Supplier"}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            {isEditMode
+            {supplierId
               ? "Update supplier details like phone number, gari number, route and payment information."
               : "Add supplier details like phone number, gari number, route and payment information."}
           </p>
@@ -224,15 +289,78 @@ export default function NewOutdoorSupplierPage() {
           </Link>
           <button
             type="submit"
+            disabled={isSubmitting}
             className={`inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 ${blockedButtonClass}`}
             {...blockedButtonProps(canSubmit)}
           >
             <Store className="h-4 w-4" />
             <Save className="h-4 w-4" />
-            {isEditMode ? "Update Outdoor Supplier" : "Save Outdoor Supplier"}
+            {isSubmitting
+              ? (supplierId ? "Updating..." : "Saving...")
+              : (supplierId ? "Update Outdoor Supplier" : "Save Outdoor Supplier")}
           </button>
         </div>
       </form>
+      {showSuccessModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                <CheckCircle className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-semibold text-slate-900">Success</h3>
+                <p className="mt-1 text-sm text-slate-600">{modalMessage}</p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={handleSuccessClose}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {showErrorModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+                <AlertCircle className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">Something went wrong</h3>
+                    <p className="mt-1 text-sm text-slate-600">{modalMessage}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowErrorModal(false)}
+                    className="text-slate-400 transition hover:text-slate-600"
+                    aria-label="Close modal"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowErrorModal(false)}
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

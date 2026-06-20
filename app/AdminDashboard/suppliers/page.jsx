@@ -98,6 +98,7 @@ const parseAmount = (value) => {
 
 const getSupplierPaymentHistoryCacheKey = (id) =>
   `supplier-payment-history:${String(id || "").trim()}`;
+const REMAINING_BILL_MARKER = "__remaining_bill__";
 
 const readCachedSupplierPaymentHistory = (id) => {
   if (typeof window === "undefined") return [];
@@ -112,6 +113,16 @@ const readCachedSupplierPaymentHistory = (id) => {
     return [];
   }
 };
+
+const normalizeSupplierPayment = (payment = {}) => ({
+  ...payment,
+  id: String(payment?._id || payment?.id || payment?.paymentId || "").trim(),
+  supplierId: String(payment?.supplierId || "").trim(),
+  supplier: payment?.supplier || payment?.supplierName || "",
+  supplierName: payment?.supplierName || payment?.supplier || "",
+  amount: Number(payment?.paidAmount ?? payment?.amount ?? 0),
+  notes: String(payment?.notes || "").trim(),
+});
 
 const normalizeSupplierLookupValue = (value) =>
   String(value || "")
@@ -170,7 +181,12 @@ const getNormalizedPurchaseAmounts = (purchase) => {
   };
 };
 
-const getSupplierAccountPendingAmount = (supplier, purchaseStats = null, matchedPurchases = []) => {
+const getSupplierAccountPendingAmount = (
+  supplier,
+  purchaseStats = null,
+  matchedPurchases = [],
+  supplierPayments = []
+) => {
   const supplierBills = Array.isArray(supplier?.bills) ? supplier.bills : [];
   const totalRemainingFromBills = supplierBills.reduce((sum, bill) => {
     const explicitRemaining = parseAmount(bill?.remainingAmount);
@@ -190,14 +206,24 @@ const getSupplierAccountPendingAmount = (supplier, purchaseStats = null, matched
     (sum, purchase) => sum + getNormalizedPurchaseAmounts(purchase).totalAmount,
     0
   );
-  const supplierPaymentHistory = Array.isArray(supplier?.paymentHistory) ? supplier.paymentHistory : [];
-  const cachedPaymentHistory = readCachedSupplierPaymentHistory(supplier?.id);
-  const paymentHistory = cachedPaymentHistory.length > 0 ? cachedPaymentHistory : supplierPaymentHistory;
-  const totalCredit = paymentHistory.reduce((sum, payment) => sum + parseAmount(payment?.amount), 0);
+  const supplierPaymentHistory = Array.isArray(supplierPayments) && supplierPayments.length > 0
+    ? supplierPayments
+    : (() => {
+        const supplierHistory = Array.isArray(supplier?.paymentHistory) ? supplier.paymentHistory : [];
+        const cachedPaymentHistory = readCachedSupplierPaymentHistory(supplier?.id);
+        return cachedPaymentHistory.length > 0 ? cachedPaymentHistory : supplierHistory;
+      })();
+  const totalCredit = supplierPaymentHistory.reduce((sum, payment) => {
+    if (String(payment?.notes || "").trim() === REMAINING_BILL_MARKER) {
+      return sum;
+    }
+    return sum + parseAmount(payment?.amount ?? payment?.paidAmount);
+  }, 0);
   const fallbackDebit =
     parseAmount(purchaseStats?.totalAmount) ||
     parseAmount(supplier?.statistics?.totalAmount);
-  if (supplierBills.length > 0) {
+
+  if (supplierBills.length > 0 && totalCredit <= 0) {
     return Math.max(totalRemainingFromBills, 0);
   }
 
@@ -210,6 +236,11 @@ const getSupplierAccountPendingAmount = (supplier, purchaseStats = null, matched
 
   return Math.max(totalDebit - totalCredit, 0);
 };
+
+const hasSupplierAccountSnapshot = (supplier = {}) =>
+  Array.isArray(supplier?.bills) && supplier.bills.length > 0 ||
+  Array.isArray(supplier?.paymentHistory) && supplier.paymentHistory.length > 0 ||
+  typeof supplier?.totalDue !== "undefined";
 
 const getMatchedSupplierPurchases = (supplier, purchases = []) => {
   const supplierLookupKeys = buildSupplierLookupKeys(supplier);
@@ -254,6 +285,7 @@ export default function SuppliersPage() {
   const router = useRouter();
   const [suppliers, setSuppliers] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [supplierPayments, setSupplierPayments] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All Status");
   const [selectedBillStatus, setSelectedBillStatus] = useState("All Bills");
@@ -349,8 +381,34 @@ export default function SuppliersPage() {
     fetchPurchases();
   }, []);
 
+  useEffect(() => {
+    const fetchSupplierPayments = async () => {
+      try {
+        const response = await apiRequest("/supplierpayments", { method: "GET" });
+        if (response?.success) {
+          setSupplierPayments(
+            (Array.isArray(response?.supplierpayments) ? response.supplierpayments : []).map(normalizeSupplierPayment)
+          );
+        }
+      } catch (error) {
+        console.error("Fetch Supplier Payments Error:", error);
+      }
+    };
+
+    fetchSupplierPayments();
+  }, []);
+
   const suppliersWithPurchaseCounts = suppliers.map((supplier) => {
     const matchedPurchases = getMatchedSupplierPurchases(supplier, purchases);
+    const matchedSupplierPayments = supplierPayments.filter((payment) => {
+      const paymentLookupKeys = buildSupplierLookupKeys(payment);
+      const supplierLookupKeys = buildSupplierLookupKeys(supplier);
+      const supplierIds = [supplier?._id, supplier?.id].map((value) => String(value || "").trim()).filter(Boolean);
+      return (
+        (payment.supplierId && supplierIds.includes(String(payment.supplierId || "").trim())) ||
+        paymentLookupKeys.some((key) => supplierLookupKeys.includes(key))
+      );
+    });
     const purchaseCount = matchedPurchases.length;
     const purchaseStats =
       matchedPurchases.length > 0
@@ -384,19 +442,27 @@ export default function SuppliersPage() {
     const accountPendingAmount = getSupplierAccountPendingAmount(
       supplier,
       purchaseStats,
-      matchedPurchases
+      matchedPurchases,
+      matchedSupplierPayments
     );
+    const supplierSnapshotPendingAmount = Math.max(
+      parseAmount(supplier?.totalDue ?? supplier?.statistics?.pendingAmount),
+      0
+    );
+    const effectivePendingAmount = hasSupplierAccountSnapshot(supplier)
+      ? Math.max(accountPendingAmount, supplierSnapshotPendingAmount)
+      : accountPendingAmount;
 
     return {
       ...supplier,
         purchaseCount,
-        accountPendingAmount,
+        accountPendingAmount: effectivePendingAmount,
         purchaseStats: purchaseStats
           ? {
             ...purchaseStats,
             totalAmount: formatRs(purchaseStats.totalAmount),
             paidAmount: formatRs(purchaseStats.paidAmount),
-            pendingAmount: formatRs(accountPendingAmount),
+            pendingAmount: formatRs(effectivePendingAmount),
           }
         : null,
       };

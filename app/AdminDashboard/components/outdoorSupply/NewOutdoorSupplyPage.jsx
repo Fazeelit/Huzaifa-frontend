@@ -2,22 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Save, ShoppingCart, Trash2, Truck } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle, LoaderCircle, Plus, Save, ShoppingCart, Trash2, Truck, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { apiRequest } from "../../authservice/api";
 import { usePermissions } from "../../authservice/usePermissions";
 import { blockedButtonClass, blockedButtonProps } from "../../authservice/permissions";
+import { getActualStockValue } from "../../utils/uomConverter";
 import {
   formatDateDDMMYYYY,
   normalizeDateInputDDMMYYYY,
   toIsoFromDDMMYYYY,
 } from "../../utils/formatting";
-import {
-  getOutdoorSupplyById,
-  getOutdoorSuppliers,
-  saveOutdoorSupply,
-  updateOutdoorSupply,
-} from "../outdoorSupply/storage";
 
 const createEmptyItem = () => ({
   id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
@@ -35,6 +30,13 @@ const formatCurrency = (value) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+const normalizeName = (value = "") =>
+  String(value)
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/\s+/g, "")
+    .replace(/[^\p{L}\p{N}]/gu, "");
 
 const getSaleQuantity = (item) =>
   Math.max(
@@ -74,11 +76,7 @@ export default function NewOutdoorSupplyPage() {
     : String(params?.id || "").trim();
   const isEditMode = Boolean(supplyId);
   const canSubmit = isEditMode ? true : canCreate;
-  const initialSupply = useMemo(
-    () => (isEditMode ? getOutdoorSupplyById(supplyId) : null),
-    [isEditMode, supplyId]
-  );
-  const [suppliers] = useState(() => getOutdoorSuppliers());
+  const [suppliers, setSuppliers] = useState([]);
   const [productsList, setProductsList] = useState([]);
   const [supplierId, setSupplierId] = useState("");
   const [supplyDate, setSupplyDate] = useState(() => formatDateDDMMYYYY(new Date()));
@@ -87,6 +85,13 @@ export default function NewOutdoorSupplyPage() {
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState({ type: "", text: "" });
   const [processingSaleItemId, setProcessingSaleItemId] = useState("");
+  const [isLoadingSupply, setIsLoadingSupply] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [showCreateSaleSuccessModal, setShowCreateSaleSuccessModal] = useState(false);
+  const [modalMessage, setModalMessage] = useState("");
+  const [backendSupplyId, setBackendSupplyId] = useState(() => String(supplyId || "").trim());
 
   useEffect(() => {
     return () => {
@@ -104,26 +109,94 @@ export default function NewOutdoorSupplyPage() {
       setItems([createEmptyItem()]);
       setErrors({});
       setMessage({ type: "", text: "" });
+      setBackendSupplyId("");
       return;
     }
+  }, [isEditMode]);
 
-    if (!initialSupply) {
-      setMessage({
-        type: "error",
-        text: "This outdoor supply record was not found.",
-      });
-      return;
-    }
+  useEffect(() => {
+    const normalizeSupplierRecord = (supplier) => ({
+      ...supplier,
+      id: supplier?._id || supplier?.id || "",
+      supplierName: supplier?.supplierName || supplier?.name || "",
+      phoneNo: supplier?.phoneNo || supplier?.phone || "",
+      gariNo: supplier?.gariNo || "",
+      routeName: supplier?.routeName || "",
+      monthlyPay: Number(supplier?.monthlyPay || 0),
+      commission: Number(supplier?.commission || 0),
+      address: supplier?.address || "",
+      notes: supplier?.notes || "",
+    });
 
-    setSupplierId(String(initialSupply.supplierId || ""));
-    setSupplyDate(
-      formatDateDDMMYYYY(initialSupply.supplyDate || initialSupply.createdAt || new Date())
-    );
-    setInvoiceNumber(String(initialSupply.invoiceNumber || ""));
-    setItems(mapSupplyItems(initialSupply.items));
-    setErrors({});
-    setMessage({ type: "", text: "" });
-  }, [initialSupply, isEditMode]);
+    const loadSuppliers = async () => {
+      try {
+        const suppliersResponse = await apiRequest("/outdoor-supply-management/suppliers", {
+          method: "GET",
+          suppressErrorToast: true,
+        });
+        const supplierRows = Array.isArray(suppliersResponse?.data)
+          ? suppliersResponse.data
+          : Array.isArray(suppliersResponse)
+            ? suppliersResponse
+            : [];
+        setSuppliers(supplierRows.map(normalizeSupplierRecord));
+      } catch (error) {
+        console.error("Failed to load outdoor suppliers:", error);
+        setSuppliers([]);
+      }
+    };
+
+    const loadEditData = async () => {
+      if (!isEditMode || !supplyId) return;
+
+      try {
+        setIsLoadingSupply(true);
+        setMessage({ type: "", text: "" });
+
+        const supplyResponse = await apiRequest(`/outdoor-supply-management/${supplyId}`, {
+          method: "GET",
+          suppressErrorToast: true,
+        });
+
+        const supply = supplyResponse?.data || supplyResponse;
+        if (!supply?._id && !supply?.id) {
+          throw new Error("This outdoor supply record was not found.");
+        }
+
+        setBackendSupplyId(String(supply?._id || supply?.id || supplyId).trim());
+        const resolvedSupplier =
+          supply?.supplierId && typeof supply.supplierId === "object"
+            ? normalizeSupplierRecord(supply.supplierId)
+            : null;
+
+        setSupplierId(
+          String(
+            resolvedSupplier?.id ||
+              supply?.supplierId?._id ||
+              supply?.supplierId?.id ||
+              supply?.supplierId ||
+              ""
+          )
+        );
+        setSupplyDate(
+          formatDateDDMMYYYY(supply?.supplyDate || supply?.createdAt || new Date())
+        );
+        setInvoiceNumber(String(supply?.invoiceNumber || ""));
+        setItems(mapSupplyItems(supply?.items));
+        setErrors({});
+      } catch (error) {
+        setMessage({
+          type: "error",
+          text: error?.message || "This outdoor supply record was not found.",
+        });
+      } finally {
+        setIsLoadingSupply(false);
+      }
+    };
+
+    loadSuppliers();
+    loadEditData();
+  }, [isEditMode, supplyId]);
 
   useEffect(() => {
     const mapProductsForDropdown = (products) =>
@@ -290,6 +363,38 @@ export default function NewOutdoorSupplyPage() {
     try {
       setProcessingSaleItemId(item.id);
       setMessage({ type: "", text: "" });
+      setShowCreateSaleSuccessModal(false);
+
+      const productsResponse = await apiRequest("/products", {
+        method: "GET",
+        suppressErrorToast: true,
+      });
+      const products = Array.isArray(productsResponse?.data)
+        ? productsResponse.data
+        : Array.isArray(productsResponse)
+          ? productsResponse
+          : [];
+      const requestedProductId = String(item?.productId || "").trim();
+      const requestedProductNameKey = normalizeName(item?.productName || "");
+      const matchingProducts = products.filter((product) => {
+        const currentProductId = String(product?._id || product?.id || "").trim();
+        if (requestedProductId && currentProductId) {
+          return currentProductId === requestedProductId;
+        }
+        return normalizeName(product?.name || "") === requestedProductNameKey;
+      });
+      const availableStock = matchingProducts.reduce(
+        (sum, product) => sum + getActualStockValue(product),
+        0
+      );
+
+      if (availableStock < saleQuantity) {
+        setMessage({
+          type: "error",
+          text: `Insufficient stock for ${item.productName || "this product"} (requested ${saleQuantity}, available ${Math.floor(availableStock)}).`,
+        });
+        return;
+      }
 
       const payload = {
         invoiceNo: String(invoiceNumber || "").trim(),
@@ -340,44 +445,7 @@ export default function NewOutdoorSupplyPage() {
       );
 
       setItems(nextItems);
-
-      if (isEditMode) {
-        const persistedTotalBill = Math.max(
-          Number(initialSupply?.totalBill || 0),
-          calculateItemsTotal(items),
-          getTotalPrice(item)
-        );
-
-        updateOutdoorSupply(supplyId, (existingSupply) => ({
-          ...existingSupply,
-          supplierId,
-          supplierName: selectedSupplier?.supplierName || existingSupply?.supplierName || "",
-          routeName: selectedSupplier?.routeName || existingSupply?.routeName || "",
-          invoiceNumber: String(invoiceNumber || "").trim(),
-          supplyDate: toIsoFromDDMMYYYY(supplyDate),
-          items: nextItems.map((currentItem) => ({
-            id: currentItem.id,
-            productId: currentItem.productId,
-            productName: String(currentItem.productName || "").trim(),
-            manufacturer: String(currentItem.manufacturer || "").trim(),
-            receivedQuantity: Number(currentItem.receivedQuantity || 0),
-            returnedQuantity: Number(currentItem.returnedQuantity || 0),
-            saleQuantity: getSaleQuantity(currentItem),
-            price: Number(currentItem.price || 0),
-            totalPrice: getTotalPrice(currentItem),
-          })),
-          totalBill: persistedTotalBill,
-          createdSaleId: String(response?.data?._id || existingSupply?.createdSaleId || "").trim(),
-          createdSaleInvoiceNo: String(
-            response?.data?.invoiceNo || payload.invoiceNo || existingSupply?.createdSaleInvoiceNo || ""
-          ).trim(),
-        }));
-      }
-
-      setMessage({
-        type: "success",
-        text: `Sale created successfully for ${item.productName || "outdoor supply item"}.`,
-      });
+      setShowCreateSaleSuccessModal(true);
     } catch (error) {
       console.error("Failed to create sale for outdoor supply item:", error);
       setMessage({
@@ -417,7 +485,7 @@ export default function NewOutdoorSupplyPage() {
     return Object.keys(nextErrors).length === 0;
   };
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
     if (!validate()) return;
 
@@ -443,29 +511,91 @@ export default function NewOutdoorSupplyPage() {
       totalBill,
     };
 
-    if (isEditMode) {
-      updateOutdoorSupply(supplyId, payload);
-    } else {
-      saveOutdoorSupply(payload);
+    try {
+      setIsSubmitting(true);
+      setShowErrorModal(false);
+      setShowSuccessModal(false);
+      setModalMessage("");
+
+      if (isEditMode) {
+        const updateTargetId = backendSupplyId;
+        if (!updateTargetId) {
+          throw new Error("Outdoor supply is missing a valid database ID");
+        }
+
+        await apiRequest(`/outdoor-supply-management/updateOutdoorSupply/${updateTargetId}`, {
+          method: "PUT",
+          data: payload,
+        });
+
+        setMessage({
+          type: "success",
+          text: "Outdoor Supply has been successfully updated",
+        });
+        setModalMessage("Outdoor Supply has been successfully updated");
+        setShowSuccessModal(true);
+      } else {
+        await apiRequest("/outdoor-supply-management/createOutdoorSupply", {
+          method: "POST",
+          data: payload,
+        });
+        setMessage({
+          type: "success",
+          text: "Outdoor supply saved successfully.",
+        });
+
+        if (redirectTimeoutRef.current) {
+          window.clearTimeout(redirectTimeoutRef.current);
+        }
+
+        redirectTimeoutRef.current = window.setTimeout(() => {
+          router.push(
+            `/AdminDashboard/outdoor-supply?success=1&message=${encodeURIComponent(
+              "Outdoor supply saved successfully."
+            )}`
+          );
+        }, 900);
+      }
+    } catch (error) {
+      const nextMessage =
+        error?.response?.data?.message ||
+        error?.message ||
+        "Failed to update outdoor supply.";
+
+      setMessage({ type: "error", text: nextMessage });
+      setModalMessage(nextMessage);
+      setShowErrorModal(true);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setMessage({
-      type: "success",
-      text: isEditMode
-        ? "Outdoor supply updated successfully."
-        : "Outdoor supply saved successfully.",
-    });
-
-    if (redirectTimeoutRef.current) {
-      window.clearTimeout(redirectTimeoutRef.current);
-    }
-
-    redirectTimeoutRef.current = window.setTimeout(() => {
-      router.push("/AdminDashboard/outdoor-supply");
-    }, 900);
   };
 
+  const handleSuccessModalClose = () => {
+    setShowSuccessModal(false);
+    router.push(
+      isEditMode
+        ? "/AdminDashboard/outdoor-supply"
+        : `/AdminDashboard/outdoor-supply?success=1&message=${encodeURIComponent(modalMessage)}`
+    );
+  };
+
+  const handleCreateSaleSuccessModalClose = () => {
+    setShowCreateSaleSuccessModal(false);
+  };
+
+  if (isLoadingSupply) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+        <div className="flex items-center gap-3 text-slate-600">
+          <LoaderCircle className="h-5 w-5 animate-spin" />
+          Loading outdoor supply...
+        </div>
+      </div>
+    );
+  }
+
   return (
+    <>
     <div className="mx-auto w-full max-w-7xl space-y-5 pb-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
@@ -703,12 +833,15 @@ export default function NewOutdoorSupplyPage() {
               </Link>
               <button
                 type="submit"
+                disabled={isSubmitting}
                 className={`inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 ${blockedButtonClass}`}
                 {...blockedButtonProps(canSubmit)}
               >
                 <Truck className="h-4 w-4" />
                 <Save className="h-4 w-4" />
-                {isEditMode ? "Update Outdoor Supply" : "Save Outdoor Supply"}
+                {isSubmitting
+                  ? (isEditMode ? "Updating..." : "Saving...")
+                  : (isEditMode ? "Update Outdoor Supply" : "Save Outdoor Supply")}
               </button>
             </div>
           </div>
@@ -727,5 +860,90 @@ export default function NewOutdoorSupplyPage() {
         </section>
       </form>
     </div>
+    {showSuccessModal ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="flex items-start gap-3">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+              <CheckCircle className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-base font-semibold text-slate-900">Success</h3>
+              <p className="mt-1 text-sm text-slate-600">{modalMessage}</p>
+            </div>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={handleSuccessModalClose}
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    {showCreateSaleSuccessModal ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="flex items-start gap-3">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+              <CheckCircle className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-base font-semibold text-slate-900">Success</h3>
+              <p className="mt-1 text-sm text-slate-600">Create sale successfully.</p>
+            </div>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={handleCreateSaleSuccessModalClose}
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    {showErrorModal ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="flex items-start gap-3">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+              <AlertCircle className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">Something went wrong</h3>
+                  <p className="mt-1 text-sm text-slate-600">{modalMessage}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowErrorModal(false)}
+                  className="text-slate-400 transition hover:text-slate-600"
+                  aria-label="Close modal"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setShowErrorModal(false)}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 }

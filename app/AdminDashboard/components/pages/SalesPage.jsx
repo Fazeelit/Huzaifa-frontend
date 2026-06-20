@@ -48,6 +48,11 @@ const formatReceiptDate = (value = new Date()) => {
   return `${day}/${month}/${year}   ${hours12}:${minutes} ${suffix}`;
 };
 
+const toTitleCase = (value = "") =>
+  String(value)
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
 const inferDiscountPercentageLabel = (subtotal, discount) => {
   const safeSubtotal = Number(subtotal || 0);
   const safeDiscount = Number(discount || 0);
@@ -603,7 +608,7 @@ const SalesPage = () => {
             border-bottom: 1px solid #000;
             border-left: 0;
             border-right: 0;
-            padding: 4px;
+            padding: 3px 3px;
             vertical-align: top;
           }
           .items-table tr.product-row td:not(.item-name) {
@@ -625,6 +630,13 @@ const SalesPage = () => {
           }
           .items-table td.item-name {
             font-family: ${URDU_RECEIPT_FONT_STACK};
+            color: #000;
+            line-height: 1;
+          }
+          .items-table td.item-name .item-subtext {
+            display: block;
+            margin-top: 1px;
+            line-height: 1;
           }
           .items-table th:nth-child(2),
           .items-table td:nth-child(2) {
@@ -774,7 +786,7 @@ const SalesPage = () => {
 
                             return `
                               <tr class="product-row" key="${item._id || item.id || idx}">
-                                <td class="item-name">${item.name || "-"}${freeQty > 0 ? `<div class="item-subtext">Free: ${freeQty}</div>` : ""}</td>
+                                <td class="item-name">${toTitleCase(item.name || "-")}${freeQty > 0 ? `<div class="item-subtext">Free: ${freeQty}</div>` : ""}</td>
                                 <td>${qty}</td>
                                 <td> ${price.toLocaleString()}</td>
                                 <td> ${lineTotal.toLocaleString()}</td>

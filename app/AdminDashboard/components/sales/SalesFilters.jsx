@@ -35,7 +35,7 @@ const SalesFilters = ({
 
   return (
     <div className="rounded-2xl border border-white/80 bg-white/90 p-4 shadow-sm backdrop-blur-sm">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center">
+      <div className="space-y-4">
         {/* 🔍 Search */}
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
@@ -48,12 +48,12 @@ const SalesFilters = ({
         </div>
 
         {/* 🎯 All / Today filter */}
-        <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:flex-wrap md:items-center">
+        <div className="flex w-full flex-wrap items-center gap-3">
           {["all", "today"].map((f) => (
             <button
               key={f}
               onClick={() => handleQuickFilter(f)}
-              className={`h-10 w-full rounded-xl px-4 text-xs font-semibold transition sm:w-auto ${
+              className={`h-10 rounded-xl px-4 text-xs font-semibold transition ${
                 filter === f
                   ? "bg-gradient-to-r from-sky-600 to-cyan-600 text-white shadow-sm shadow-cyan-200/70"
                   : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
@@ -64,19 +64,19 @@ const SalesFilters = ({
           ))}
 
           {/* 📆 Date range picker */}
-          <div className="flex w-full flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-1 flex-wrap items-center gap-2 md:flex-nowrap">
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100"
+              className="h-10 min-w-[150px] flex-1 rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100"
             />
-            <span className="text-center text-sm sm:text-left">to</span>
+            <span className="text-sm whitespace-nowrap">to</span>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100"
+              className="h-10 min-w-[150px] flex-1 rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100"
             />
           </div>
         </div>

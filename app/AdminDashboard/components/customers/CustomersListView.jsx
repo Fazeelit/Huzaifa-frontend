@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Edit, Eye, Mail, Phone, Trash2 } from "lucide-react";
 
-const formatSpent = (value) => `PKR ${(Number(value) || 0).toLocaleString()}`;
+const formatAmount = (value) => `PKR ${(Number(value) || 0).toLocaleString()}`;
 
 export default function CustomersListView({
   paginatedCustomers,
@@ -23,7 +23,7 @@ export default function CustomersListView({
               <th className="px-4 py-2 text-left text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Contact</th>
               <th className="px-4 py-2 text-left text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
               <th className="px-4 py-2 text-left text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Last Purchase</th>
-              <th className="px-4 py-2 text-left text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Spent</th>
+              <th className="px-4 py-2 text-left text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Pending</th>
               <th className="px-4 py-2 text-left text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Satisfaction</th>
               <th className="px-4 py-2 text-right text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions</th>
             </tr>
@@ -91,7 +91,7 @@ export default function CustomersListView({
 
                 <td className="px-4 py-2">
                   <p className="text-xs font-bold text-green-600 dark:text-green-400">
-                    {formatSpent(customer.totalSpent)}
+                    {formatAmount(customer.exactPendingAmount || 0)}
                   </p>
                 </td>
 

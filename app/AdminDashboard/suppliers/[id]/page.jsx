@@ -31,6 +31,14 @@ const parseAmount = (value) => {
 const formatRs = (value) => `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
 const CRUD_CACHE_KEY = "appCrudResponseCache";
 
+const toTitleCase = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+const REMAINING_BILL_MARKER = "__remaining_bill__";
+const REMAINING_BILL_PAYMENT_NOTE = "__remaining_bill_payment__";
+const REMAINING_BILL_REFERENCE = "remaining-bill";
+
 const formatDate = (value) => {
   if (!value) return "N/A";
   const date = new Date(value);
@@ -65,7 +73,6 @@ const normalizesupplier = (raw = {}) => ({
   phone: raw.phone || raw.mobile || "",
   mobile: raw.mobile || raw.phone || "",
   bills: Array.isArray(raw.bills) ? raw.bills : [],
-  paymentHistory: Array.isArray(raw.paymentHistory) ? raw.paymentHistory : [],
   products: Array.isArray(raw.products) ? raw.products : [],
   bankDetails: raw.bankDetails || {
     bankName: "",
@@ -78,6 +85,45 @@ const normalizesupplier = (raw = {}) => ({
   totalSpent: Number(raw.totalSpent || 0) || 0,
   creditLimit: Number(raw.creditLimit || 0) || 0,
 });
+
+const normalizeSupplierPayment = (payment = {}) => {
+  const amountNumber = Number(payment?.paidAmount ?? payment?.amount ?? 0);
+  const paymentDate = payment?.appliedAt || payment?.date || "";
+
+  return {
+    ...payment,
+    id: String(payment?._id || payment?.id || payment?.paymentId || "").trim(),
+    paymentId: String(payment?._id || payment?.id || payment?.paymentId || "").trim(),
+    supplierId: String(payment?.supplierId || "").trim(),
+    purchaseId: String(payment?.purchaseId || "").trim(),
+    amount: formatRs(amountNumber),
+    amountNumber,
+    date: paymentDate,
+    appliedAt: paymentDate,
+    method: payment?.paymentMethod || payment?.method || "Cash",
+    paymentMethod: payment?.paymentMethod || payment?.method || "Cash",
+    reference: payment?.reference || "",
+    billId: payment?.billId || "",
+    notes: payment?.notes || "",
+    transactionTimestamp: payment?.updatedAt || paymentDate || payment?.createdAt || "",
+    source: "payment",
+  };
+};
+
+const extractSupplierPaymentsArray = (response) =>
+  Array.isArray(response?.supplierpayments)
+    ? response.supplierpayments
+    : Array.isArray(response?.data?.supplierpayments)
+      ? response.data.supplierpayments
+      : Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response)
+          ? response
+          : [];
+
+const isRemainingBillPaymentEntry = (entry = {}) =>
+  String(entry?.billId || "").trim() === REMAINING_BILL_REFERENCE &&
+  String(entry?.notes || "").trim() !== REMAINING_BILL_MARKER;
 
 const getNormalizedDateValue = (value) => {
   if (!value) return null;
@@ -125,11 +171,6 @@ const strippurchaseMetaFields = (purchase) => {
   delete requestBody.updatedAt;
   delete requestBody.__v;
   return requestBody;
-};
-
-const getEntityTimestamp = (entry) => {
-  const value = new Date(entry?.updatedAt || entry?.createdAt || entry?.purchaseDate || 0).getTime();
-  return Number.isFinite(value) ? value : 0;
 };
 
 const extractpurchasesArray = (response) =>
@@ -468,10 +509,49 @@ const syncCachedSupplier = (nextSupplier) => {
   }
 };
 
-const hasClaimStatus = (purchase) =>
-  (Array.isArray(purchase?.items) ? purchase.items : Array.isArray(purchase?.products) ? purchase.products : []).some(
-    (item) => String(item?.status || "").trim().toUpperCase() === "CLAIM",
-  );
+const clearSupplierLocalCaches = (supplierLike = {}, options = {}) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const { clearPurchases = false } = options;
+
+  try {
+    const supplierIds = [supplierLike?._id, supplierLike?.id]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    supplierIds.forEach((id) => {
+      window.localStorage.removeItem(`supplier-payment-history:${id}`);
+    });
+
+    const raw = window.localStorage.getItem(CRUD_CACHE_KEY);
+    if (!raw) {
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+
+    if (supplierIds.length) {
+      delete parsed["/suppliers"];
+      delete parsed["/supplierpayments"];
+      supplierIds.forEach((id) => {
+        delete parsed[`/suppliers/${id}`];
+        delete parsed[`/suppliers/updateSupplier/${id}`];
+        delete parsed[`/supplierpayments?supplierId=${id}`];
+        delete parsed[`/supplierpayments/getSupplierPaymentsBySupplier/${id}`];
+      });
+    }
+
+    if (clearPurchases) {
+      delete parsed["/purchases"];
+    }
+
+    window.localStorage.setItem(CRUD_CACHE_KEY, JSON.stringify(parsed));
+  } catch {
+    // Ignore cache cleanup issues and let live reload keep the page correct.
+  }
+};
 
 const readCachedpurchases = () => {
   if (typeof window === "undefined") {
@@ -492,38 +572,11 @@ const readCachedpurchases = () => {
 };
 
 const mergeLatestpurchases = (networkpurchases) => {
-  const cachedpurchases = readCachedpurchases();
-  if (!cachedpurchases.length) {
+  if (Array.isArray(networkpurchases) && networkpurchases.length) {
     return networkpurchases;
   }
 
-  const cachedByKey = new Map();
-  cachedpurchases.forEach((purchase) => {
-    const keys = [purchase?._id, purchase?.invoiceNo, purchase?.invoiceNumber]
-      .map((value) => String(value || "").trim())
-      .filter(Boolean);
-
-    keys.forEach((key) => {
-      cachedByKey.set(key, purchase);
-    });
-  });
-
-  return networkpurchases.map((purchase) => {
-    const keys = [purchase?._id, purchase?.invoiceNo, purchase?.invoiceNumber]
-      .map((value) => String(value || "").trim())
-      .filter(Boolean);
-
-    const cachedpurchase = keys.map((key) => cachedByKey.get(key)).find(Boolean);
-    if (!cachedpurchase) {
-      return purchase;
-    }
-
-    if (hasClaimStatus(cachedpurchase) && !hasClaimStatus(purchase)) {
-      return cachedpurchase;
-    }
-
-    return getEntityTimestamp(cachedpurchase) > getEntityTimestamp(purchase) ? cachedpurchase : purchase;
-  });
+  return readCachedpurchases();
 };
 
 const matchessupplierpurchase = (purchase, supplier) => {
@@ -582,6 +635,7 @@ export default function supplierDetailPage() {
 
   const [supplier, setsupplier] = useState(null);
   const [supplierpurchases, setsupplierpurchases] = useState([]);
+  const [supplierPayments, setSupplierPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("bills");
   const [billDateRange, setBillDateRange] = useState(defaultDateRange);
@@ -590,6 +644,7 @@ export default function supplierDetailPage() {
   const [selectedBill, setSelectedBill] = useState(null);
   const [blankBillDebit, setBlankBillDebit] = useState(0);
   const [blankBillDebitDraft, setBlankBillDebitDraft] = useState("0");
+  const [blankBillPaymentId, setBlankBillPaymentId] = useState("");
   const [showBlankBillModal, setShowBlankBillModal] = useState(false);
   const [editTransactionTarget, setEditTransactionTarget] = useState(null);
   const [isSavingEditedPayment, setIsSavingEditedPayment] = useState(false);
@@ -641,12 +696,32 @@ export default function supplierDetailPage() {
   };
 
   const getLinkedPurchaseRemainingAmount = (purchase = null, fallbackBill = null) => {
+    const fallbackRemainingAmount = Math.max(Number(fallbackBill?.remainingAmountNumber || 0), 0);
+
     if (purchase?._id) {
-      return Math.max(getNormalizedpurchaseAmounts(purchase).balanceAmount, 0);
+      return Math.max(
+        getNormalizedpurchaseAmounts(purchase).balanceAmount,
+        fallbackRemainingAmount,
+        0
+      );
     }
 
-    return Math.max(Number(fallbackBill?.remainingAmountNumber || 0), 0);
+    return fallbackRemainingAmount;
   };
+
+  const getSelectedBillPayableAmount = (bill = null) => {
+    if (bill?.source === "supplier-total") {
+      return Math.max(Number(latestTransactionBalance || 0), 0);
+    }
+
+    return Math.max(Number(bill?.remainingAmountNumber || 0), 0);
+  };
+
+  const getEditablePaymentPayableAmount = (entry = null) =>
+    Math.max(
+      Number(entry?.linkedBillRemaining || 0) + Number(entry?.credit || 0),
+      0
+    );
 
   useEffect(() => {
     const { permissions } = readStoredAuth();
@@ -660,7 +735,7 @@ export default function supplierDetailPage() {
       method: "Cash",
       reference: "",
       date: new Date().toISOString().split("T")[0],
-      partialAmount: selectedBill.remainingAmountNumber,
+      partialAmount: getSelectedBillPayableAmount(selectedBill),
     });
   }, [showPaymentModal, selectedBill]);
 
@@ -675,9 +750,14 @@ export default function supplierDetailPage() {
     }
 
     try {
-      const [supplierResponse, purchasesResponse] = await Promise.all([
+      const [supplierResponse, purchasesResponse, paymentsResponse] = await Promise.all([
         apiRequest(`/suppliers/${supplierId}`, { method: "GET", suppressErrorToast: silent }),
         apiRequest("/purchases", {
+          method: "GET",
+          suppressErrorToast: true,
+          suppressErrorLog: true,
+        }),
+        apiRequest(`/supplierpayments/getSupplierPaymentsBySupplier/${supplierId}`, {
           method: "GET",
           suppressErrorToast: true,
           suppressErrorLog: true,
@@ -691,12 +771,33 @@ export default function supplierDetailPage() {
         const purchasesArray = mergeLatestpurchases(extractpurchasesArray(purchasesResponse));
 
         setsupplierpurchases(purchasesArray.filter((purchase) => matchessupplierpurchase(purchase, normalizedsupplier)));
+        const normalizedPayments = extractSupplierPaymentsArray(paymentsResponse).map((payment) =>
+          normalizeSupplierPayment(payment)
+        );
+        const remainingBillPayment = normalizedPayments.find(
+          (payment) =>
+            String(payment?.notes || "").trim() === REMAINING_BILL_MARKER
+        );
+        setBlankBillDebit(Number(remainingBillPayment?.amountNumber || 0));
+        setBlankBillPaymentId(String(remainingBillPayment?.paymentId || remainingBillPayment?.id || "").trim());
+        setSupplierPayments(
+          normalizedPayments.filter(
+            (payment) =>
+              String(payment?.notes || "").trim() !== REMAINING_BILL_MARKER
+          )
+        );
       } else {
         setsupplier(null);
+        setBlankBillDebit(0);
+        setBlankBillPaymentId("");
+        setSupplierPayments([]);
       }
     } catch (error) {
       console.error("supplier detail load error:", error);
       setsupplier(null);
+      setBlankBillDebit(0);
+      setBlankBillPaymentId("");
+      setSupplierPayments([]);
     } finally {
       if (!silent) {
         setLoading(false);
@@ -793,51 +894,14 @@ export default function supplierDetailPage() {
 
   const totalBillAmount = displayBills.reduce((sum, bill) => sum + bill.amountNumber, 0);
   const totalOutstandingAmount = displayBills.reduce((sum, bill) => sum + bill.remainingAmountNumber, 0);
-
-  const purchaseLinkedBillKeys = new Set(
-    supplierpurchases.flatMap((purchase) =>
-      getEntryMatchKeys(purchase?._id, purchase?.invoiceNo, purchase?.invoiceNumber)
-    )
+  const totalSupplierPendingAmount = Math.max(
+    Number(totalOutstandingAmount || 0) + Number(blankBillDebit || 0),
+    0
   );
 
-  const supplierPaymentHistory = (Array.isArray(supplier?.paymentHistory) ? supplier.paymentHistory : [])
-    .map((payment, index) => ({
-      ...payment,
-      id: String(getPaymentEntryId(payment) || `PAY-${index + 1}`),
-      amount: formatRs(parseAmount(payment?.amount)),
-      amountNumber: parseAmount(payment?.amount),
-      date: payment?.date || "",
-      method: payment?.method || "N/A",
-      reference: payment?.reference || "",
-      billId: payment?.billId || "",
-      notes: payment?.notes || "",
-      transactionTimestamp: payment?.updatedAt || payment?.date || supplier?.updatedAt || "",
-      source: "payment",
-    }))
-    .filter((payment) => {
-      const paymentBillKeys = getEntryMatchKeys(payment?.billId, payment?.reference);
-      return !paymentBillKeys.some((key) => purchaseLinkedBillKeys.has(key));
-    });
-
-  const purchasePaymentHistory = supplierpurchases.flatMap((purchase, purchaseIndex) => {
-    const { paidAmount } = getNormalizedpurchaseAmounts(purchase);
-    if (paidAmount <= 0) {
-      return [];
-    }
-
-    return (Array.isArray(purchase?.paymentHistory) ? purchase.paymentHistory : []).map((payment, paymentIndex) =>
-      buildpurchasePaymentEntry(purchase, payment, purchaseIndex, paymentIndex)
-    );
-  });
-
   const paymentHistoryByKey = new Map();
-  [...purchasePaymentHistory, ...supplierPaymentHistory].forEach((payment) => {
-    const key = [
-      String(payment?.billId || payment?.reference || "").trim(),
-      String(payment?.date || "").trim(),
-      String(payment?.amountNumber || parseAmount(payment?.amount)).trim(),
-      String(payment?.method || "").trim(),
-    ].join("|");
+  supplierPayments.forEach((payment, index) => {
+    const key = String(payment?.paymentId || payment?.id || `PAY-${index + 1}`).trim();
     paymentHistoryByKey.set(key, payment);
   });
 
@@ -853,6 +917,7 @@ export default function supplierDetailPage() {
   const transactionFeed = [...displayBills.map((bill, index) => ({
     id: `bill-${bill.id}-${index}`,
     type: "bill",
+    typeLabel: "bill",
     date: bill.date,
     transactionTimestamp: bill.transactionTimestamp,
     reference: bill.reference,
@@ -865,12 +930,16 @@ export default function supplierDetailPage() {
         id: `payment-${payment.id}-${index}`,
         paymentId: String(payment?.id || ""),
         type: "payment",
+        typeLabel: "Payment",
         date: payment.date,
         transactionTimestamp: payment.transactionTimestamp,
-        reference: payment.billId || payment.reference || payment.id,
+        reference: payment.reference || payment.billId || payment.id,
         billId: payment.billId || "",
         paymentReference: payment.reference || "",
-        particulars: payment.notes || "N/A",
+        particulars:
+          String(payment?.notes || "").trim() === REMAINING_BILL_PAYMENT_NOTE
+            ? "old bill payment"
+            : payment.notes || "N/A",
         debit: 0,
         credit: payment.amountNumber,
         savedOrder: displayBills.length + index,
@@ -933,12 +1002,15 @@ export default function supplierDetailPage() {
       adjustedFilteredTransactions?.[0]?.balance ||
       0
   );
+  const latestTransactionBalance = Number(adjustedFilteredTransactions?.[0]?.balance || 0);
+  const shouldShowAddPaymentButton =
+    Number(latestTransactionBalance || 0) > 0 || Number(latestBillBalance || 0) > 0;
   const blankBillRow = {
     id: "blank-bill-row",
-    type: "remaining bill",
+    type: "Old Bill",
     date: "",
     reference: "",
-    particulars: "remaining bill",
+    particulars: "Old Bill",
     status: Number(blankBillDebit || 0) > 0 ? "Adjusted" : "Pending",
     debit: Number(blankBillDebit || 0),
     credit: 0,
@@ -974,7 +1046,7 @@ export default function supplierDetailPage() {
     }))
   );
 
-  const persistsupplierLedger = async (nextBills, nextPayments) => {
+  const persistsupplierLedger = async (nextBills) => {
     const nextTotalDue = nextBills.reduce(
       (sum, bill) => sum + Math.max(parseAmount(bill.amount) - parseAmount(bill.paidAmount), 0),
       0
@@ -982,7 +1054,6 @@ export default function supplierDetailPage() {
 
     const payload = {
       bills: nextBills,
-      paymentHistory: nextPayments,
       totalDue: nextTotalDue,
       lastPurchase: supplier?.lastPurchase || "",
     };
@@ -1022,7 +1093,6 @@ export default function supplierDetailPage() {
         normalizedNextSupplier = normalizesupplier({
           ...prev,
           bills: nextBills,
-          paymentHistory: nextPayments,
           totalDue: nextTotalDue,
           lastPurchase: prev?.lastPurchase || "",
         });
@@ -1195,14 +1265,28 @@ export default function supplierDetailPage() {
 
     setEditTransactionTarget({
       ...entry,
-      linkedBillRemaining: Number(linkedBill?.remainingAmountNumber || 0),
+      linkedBillRemaining: Number(
+        linkedBill?.remainingAmountNumber ??
+          (isRemainingBillPaymentEntry(entry) ? entry?.balance : 0) ??
+          0
+      ),
       linkedBillAmount: Number(linkedBill?.amountNumber || 0),
     });
     setPaymentForm({
       method: entry.method || "Cash",
-      reference: getBillReferenceValue(linkedBill || entry),
-      date: entry.date || toDateInputValue(new Date()),
-      partialAmount: String(Number(entry.balance || 0)),
+      reference: String(
+        entry.paymentReference ||
+          entry.reference ||
+          getBillReferenceValue(linkedBill || entry) ||
+          ""
+      ).trim(),
+      date: (() => {
+        const nextDate = entry.date ? new Date(entry.date) : new Date();
+        return Number.isNaN(nextDate.getTime())
+          ? toDateInputValue(new Date())
+          : toDateInputValue(nextDate);
+      })(),
+      partialAmount: String(Number(entry.credit || 0)),
     });
   };
 
@@ -1211,16 +1295,93 @@ export default function supplierDetailPage() {
     setShowBlankBillModal(true);
   };
 
-  const handleSaveBlankBillCredit = (event) => {
+  const handleSaveBlankBillCredit = async (event) => {
     event.preventDefault();
+    if (!supplier) return;
     const nextDebit = Number(blankBillDebitDraft || 0);
     if (Number.isNaN(nextDebit) || nextDebit < 0) {
       alert("Debit amount must be 0 or greater.");
       return;
     }
 
-    setBlankBillDebit(nextDebit);
-    setShowBlankBillModal(false);
+    try {
+      const supplierIdentifier = supplier.id || supplier._id;
+      const existingPaymentId = String(blankBillPaymentId || "").trim();
+
+      if (nextDebit <= 0) {
+        if (existingPaymentId) {
+          const deleteResponse = await apiRequest(
+            `/supplierpayments/deleteSupplierPayment/${existingPaymentId}`,
+            {
+              method: "DELETE",
+              allowOfflineCrud: false,
+              data: {
+                supplierId: supplierIdentifier,
+                purchaseId: "",
+                billId: REMAINING_BILL_REFERENCE,
+                paidAmount: Number(blankBillDebit || 0),
+                paymentDate: new Date().toISOString().split("T")[0],
+              },
+            }
+          );
+
+          if (!deleteResponse?.success) {
+            alert(deleteResponse?.message || "Failed to update old bill.");
+            return;
+          }
+        }
+      } else if (existingPaymentId) {
+        const updateResponse = await apiRequest(
+          `/supplierpayments/updateSupplierPayment/${existingPaymentId}`,
+          {
+            method: "PUT",
+            allowOfflineCrud: false,
+            data: {
+              supplierId: supplierIdentifier,
+              purchaseId: "",
+              previousPurchaseId: "",
+              billId: REMAINING_BILL_REFERENCE,
+              paidAmount: nextDebit,
+              paymentMethod: "Cash",
+              paymentDate: new Date().toISOString().split("T")[0],
+              reference: REMAINING_BILL_REFERENCE,
+              notes: REMAINING_BILL_MARKER,
+            },
+          }
+        );
+
+        if (!updateResponse?.success) {
+          alert(updateResponse?.message || "Failed to update old bill.");
+          return;
+        }
+      } else {
+        const createResponse = await apiRequest("/supplierpayments/createSupplierPayment", {
+          method: "POST",
+          allowOfflineCrud: false,
+          data: {
+            supplierId: supplierIdentifier,
+            purchaseId: "",
+            billId: REMAINING_BILL_REFERENCE,
+            paidAmount: nextDebit,
+            paymentMethod: "Cash",
+            paymentDate: new Date().toISOString().split("T")[0],
+            reference: REMAINING_BILL_REFERENCE,
+            notes: REMAINING_BILL_MARKER,
+          },
+        });
+
+        if (!createResponse?.success) {
+          alert(createResponse?.message || "Failed to update old bill.");
+          return;
+        }
+      }
+
+      clearSupplierLocalCaches(supplier, { clearPurchases: false });
+      await loadsupplierData({ silent: true });
+      setShowBlankBillModal(false);
+    } catch (error) {
+      alert(error?.message || "Failed to update old bill.");
+    }
   };
 
   const handleEditPaymentTransaction = async (event) => {
@@ -1237,118 +1398,65 @@ export default function supplierDetailPage() {
     }
 
     setIsSavingEditedPayment(true);
-
-    const currentBills = buildPersistableBills();
-    const currentPayments = Array.isArray(supplier.paymentHistory) ? [...supplier.paymentHistory] : [];
-    const paymentIndex = currentPayments.findIndex((payment) => isPaymentEntryMatch(payment, editTransactionTarget));
-
-    if (paymentIndex < 0) {
-      alert("Payment record not found.");
-      setIsSavingEditedPayment(false);
-      return;
-    }
-
-    const nextPayments = [...currentPayments];
-    const billReference = getBillReferenceValue(
-      currentBills.find(
-        (bill) => String(bill?.id || "") === String(editTransactionTarget.billId || editTransactionTarget.reference || "")
-      ) || editTransactionTarget
-    );
-    nextPayments[paymentIndex] = {
-      ...nextPayments[paymentIndex],
-      amount: formatRs(nextAmount),
-      method: paymentForm.method,
-      reference: billReference,
-      date: paymentForm.date,
-      billId: billReference,
-      notes: editTransactionTarget.notes || "",
-    };
-
-    const billId = String(editTransactionTarget.billId || editTransactionTarget.reference || "");
-    const targetBillIndex = currentBills.findIndex((bill) => String(bill?.id || "") === billId);
-
-    if (targetBillIndex >= 0) {
-      const existingPaid = parseAmount(currentBills[targetBillIndex]?.paidAmount);
-      const billAmount = parseAmount(currentBills[targetBillIndex]?.amount);
-      const nextPaid = Math.max(existingPaid - previousAmount + nextAmount, 0);
-      currentBills[targetBillIndex] = {
-        ...currentBills[targetBillIndex],
-        paidAmount: formatRs(nextPaid),
-        status: nextPaid <= 0 ? "pending" : nextPaid >= billAmount ? "paid" : "partial",
-      };
-    }
-
-    const linkedpurchase = findLinkedpurchase(editTransactionTarget);
-    let resolvedEditedpurchase = null;
-    if (linkedpurchase?._id) {
-      const purchasePaymentHistory = Array.isArray(linkedpurchase.paymentHistory) ? [...linkedpurchase.paymentHistory] : [];
-      const purchasePaymentIndex = purchasePaymentHistory.findIndex((payment) => {
-        const sameAmount = parseAmount(payment?.amount) === previousAmount;
-        const sameDate = String(payment?.date || "") === String(editTransactionTarget?.date || "");
-        const sameMethod = String(payment?.method || "") === String(editTransactionTarget?.method || "");
-        return sameAmount && sameDate && sameMethod;
-      });
-
-      const nextpurchasePaymentHistory = [...purchasePaymentHistory];
-      if (purchasePaymentIndex >= 0) {
-        nextpurchasePaymentHistory[purchasePaymentIndex] = {
-          ...nextpurchasePaymentHistory[purchasePaymentIndex],
-          amount: nextAmount,
-          method: paymentForm.method,
-          date: paymentForm.date,
-        };
-      }
-
-      const nextPaidAmount = Math.max(Number(linkedpurchase?.paidAmount || 0) - previousAmount + nextAmount, 0);
-      const totalAmount = Number(linkedpurchase?.totalAmount || linkedpurchase?.total || 0);
-      const purchaseUpdateResponse = await apiRequest(`/purchases/updatepurchase/${linkedpurchase._id}`, {
-        method: "PUT",
-        data: strippurchaseMetaFields({
-          ...linkedpurchase,
-          paidAmount: nextPaidAmount,
-          cashReceived: nextPaidAmount,
-          paymentHistory: nextpurchasePaymentHistory,
-          paymentStatus: getpurchasePaymentStatus(nextPaidAmount, totalAmount),
-        }),
-      });
-
-      if (!purchaseUpdateResponse?.success) {
-        alert(purchaseUpdateResponse?.message || "Failed to update linked payment.");
-        setIsSavingEditedPayment(false);
+    try {
+      const paymentId = String(editTransactionTarget.paymentId || editTransactionTarget.id || "").trim();
+      if (!paymentId) {
+        alert("Payment record not found.");
         return;
       }
 
-      resolvedEditedpurchase = {
-        ...linkedpurchase,
-        ...strippurchaseMetaFields({
-          ...linkedpurchase,
-          paidAmount: nextPaidAmount,
-          cashReceived: nextPaidAmount,
-          paymentHistory: nextpurchasePaymentHistory,
-          paymentStatus: getpurchasePaymentStatus(nextPaidAmount, totalAmount),
-        }),
-        ...(purchaseUpdateResponse?.purchase || purchaseUpdateResponse?.data || {}),
-      };
-    }
+      const linkedpurchase = findLinkedpurchase(editTransactionTarget);
+      const linkedBill =
+        displayBills.find((bill) =>
+          hasMatchingReferenceValue(
+            [
+              String(editTransactionTarget?.billId || "").trim(),
+              String(editTransactionTarget?.reference || "").trim(),
+            ],
+            [
+              String(bill?.id || "").trim(),
+              String(bill?.reference || "").trim(),
+              String(getBillReferenceValue(bill) || "").trim(),
+            ],
+          ),
+        ) || null;
+      const billReference = isRemainingBillPaymentEntry(editTransactionTarget)
+        ? REMAINING_BILL_REFERENCE
+        : getBillReferenceValue(linkedBill || editTransactionTarget);
 
-    const saved = await persistsupplierLedger(currentBills, nextPayments);
-    if (!saved) {
-      alert("Failed to update payment.");
+      const updateResponse = await apiRequest(`/supplierpayments/updateSupplierPayment/${paymentId}`, {
+        method: "PUT",
+        allowOfflineCrud: false,
+        data: {
+          supplierId: supplier.id || supplier._id,
+          purchaseId: linkedpurchase?._id || "",
+          previousPurchaseId: linkedpurchase?._id || "",
+          billId: billReference,
+          paidAmount: nextAmount,
+          paymentMethod: paymentForm.method,
+          paymentDate: paymentForm.date,
+          reference: String(paymentForm.reference || "").trim(),
+          notes: editTransactionTarget.notes || "",
+        },
+      });
+
+      if (!updateResponse?.success) {
+        alert(updateResponse?.message || "Failed to update payment.");
+        return;
+      }
+
+      if (updateResponse?.purchase?._id) {
+        syncCachedpurchase(updateResponse.purchase);
+      }
+
+      clearSupplierLocalCaches(supplier, { clearPurchases: Boolean(linkedpurchase?._id) });
+      await loadsupplierData({ silent: true });
+      setEditTransactionTarget(null);
+    } catch (error) {
+      alert(error?.message || "Failed to update payment.");
+    } finally {
       setIsSavingEditedPayment(false);
-      return;
     }
-
-    if (resolvedEditedpurchase?._id) {
-      setsupplierpurchases((prev) =>
-        prev.map((purchase) =>
-          String(purchase?._id || "") === String(resolvedEditedpurchase?._id || "")
-            ? { ...purchase, ...resolvedEditedpurchase }
-            : purchase
-        )
-      );
-    }
-    setEditTransactionTarget(null);
-    setIsSavingEditedPayment(false);
   };
 
   const requestDeleteTransaction = (entry) => {
@@ -1380,7 +1488,10 @@ export default function supplierDetailPage() {
       }
 
       const confirmed = window.confirm(`Delete bill ${entry.reference || linkedpurchase.invoiceNo || ""}?`);
-      if (!confirmed) return;
+      if (!confirmed) {
+        setIsDeletingTransaction(false);
+        return;
+      }
 
       const deleteResponse = await apiRequest(`/purchases/deletepurchase/${linkedpurchase._id}`, {
         method: "DELETE",
@@ -1395,13 +1506,7 @@ export default function supplierDetailPage() {
       const nextBills = buildPersistableBills().filter(
         (bill) => String(bill.id || "") !== String(entry.reference || entry.id || "")
       );
-      const nextPayments = (Array.isArray(supplier.paymentHistory) ? supplier.paymentHistory : []).filter((payment) => {
-        const paymentBillId = String(payment?.billId || "").trim();
-        if (!paymentBillId) return true;
-        return paymentBillId !== String(entry.reference || "").trim();
-      });
-
-      const saved = await persistsupplierLedger(nextBills, nextPayments);
+      const saved = await persistsupplierLedger(nextBills);
       if (!saved) {
         alert("Bill deleted, but supplier ledger cleanup failed. Please refresh and verify the remaining transactions.");
       }
@@ -1417,131 +1522,57 @@ export default function supplierDetailPage() {
       return;
     }
 
-    const entryBillReference = String(
-      entry?.billId || entry?.paymentReference || entry?.reference || ""
-    ).trim();
-    const linkedpurchase =
-      findLinkedpurchase({
-        ...entry,
-        id: entryBillReference || entry?.id || "",
-        reference: entryBillReference || entry?.reference || "",
-        billId: entryBillReference || entry?.billId || "",
-      }) ||
-      supplierpurchases.find((purchase, purchaseIndex) =>
-        (Array.isArray(purchase?.paymentHistory) ? purchase.paymentHistory : []).some((payment, paymentIndex) =>
-          isPurchasePaymentEntryMatch(purchase, payment, entry, purchaseIndex, paymentIndex)
-        )
-      );
-    const currentBills = buildPersistableBills();
-    const currentPayments = Array.isArray(supplier.paymentHistory) ? [...supplier.paymentHistory] : [];
-    const nextPayments = removeMatchingSupplierLedgerPayments(currentPayments, entry, linkedpurchase);
-    const removedSupplierPayment = nextPayments.length !== currentPayments.length;
-
-    if (!removedSupplierPayment && !linkedpurchase?._id) {
-      alert("Payment record not found.");
-      setIsDeletingTransaction(false);
-      return;
-    }
-
-    const targetBillIndex = currentBills.findIndex((bill) =>
-      hasMatchingReferenceValue(
-        [
-          String(entry?.reference || "").trim(),
-          String(entry?.billId || "").trim(),
-          String(entry?.paymentReference || "").trim(),
-        ],
-        [
-          String(bill?.id || "").trim(),
-          String(bill?.reference || "").trim(),
-          String(getBillReferenceValue(bill) || "").trim(),
-        ]
-      )
-    );
-
-    if (targetBillIndex >= 0) {
-      const existingPaid = parseAmount(currentBills[targetBillIndex]?.paidAmount);
-      const billAmount = parseAmount(currentBills[targetBillIndex]?.amount);
-      const nextPaid = Math.max(existingPaid - Number(entry.credit || 0), 0);
-      currentBills[targetBillIndex] = {
-        ...currentBills[targetBillIndex],
-        paidAmount: formatRs(nextPaid),
-        status: nextPaid <= 0 ? "pending" : nextPaid >= billAmount ? "paid" : "partial",
-      };
-    }
-
-    if (linkedpurchase?._id) {
-      const purchasePaymentHistory = (Array.isArray(linkedpurchase.paymentHistory) ? linkedpurchase.paymentHistory : []).map(
-        (payment) => normalizepurchasePaymentHistory(payment)
-      );
-      const linkedPurchaseIndex = supplierpurchases.findIndex(
-        (purchase) => String(purchase?._id || "") === String(linkedpurchase?._id || "")
-      );
-      const nextpurchasePaymentHistory = removeFirstMatchingPayment(
-        purchasePaymentHistory,
-        (payment, paymentIndex) =>
-          isPurchasePaymentEntryMatch(
-            linkedpurchase,
-            payment,
-            entry,
-            linkedPurchaseIndex >= 0 ? linkedPurchaseIndex : 0,
-            paymentIndex
-          )
-      );
-
-      if (nextpurchasePaymentHistory.length === purchasePaymentHistory.length && !removedSupplierPayment) {
+    try {
+      const paymentId = String(entry?.paymentId || entry?.id || "").trim();
+      if (!paymentId) {
         alert("Payment record not found.");
-        setIsDeletingTransaction(false);
         return;
       }
 
-      const nextPaidAmount = Math.max(Number(linkedpurchase?.paidAmount || 0) - Number(entry.credit || 0), 0);
-      const purchaseUpdateResponse = await apiRequest(`/purchases/updatepurchase/${linkedpurchase._id}`, {
-        method: "PUT",
-        data: buildpurchaseUpdatePayload(linkedpurchase, {
-          paidAmount: nextPaidAmount,
-          cashReceived: nextPaidAmount,
-          paymentHistory: nextpurchasePaymentHistory,
-        }),
+      const entryBillReference = String(
+        entry?.billId || entry?.paymentReference || entry?.reference || ""
+      ).trim();
+      const linkedpurchase =
+        findLinkedpurchase({
+          ...entry,
+          id: entryBillReference || entry?.id || "",
+          reference: entryBillReference || entry?.reference || "",
+          billId: entryBillReference || entry?.billId || "",
+        }) ||
+        supplierpurchases.find((purchase, purchaseIndex) =>
+          (Array.isArray(purchase?.paymentHistory) ? purchase.paymentHistory : []).some((payment, paymentIndex) =>
+            isPurchasePaymentEntryMatch(purchase, payment, entry, purchaseIndex, paymentIndex)
+          )
+        );
+      const deleteResponse = await apiRequest(`/supplierpayments/deleteSupplierPayment/${paymentId}`, {
+        method: "DELETE",
+        allowOfflineCrud: false,
+        data: {
+          supplierId: supplier.id || supplier._id,
+          purchaseId: linkedpurchase?._id || "",
+          billId: entryBillReference,
+          paidAmount: Number(entry?.credit || 0),
+          paymentDate: entry?.date || "",
+        },
       });
 
-      if (!purchaseUpdateResponse?.success) {
-        alert(purchaseUpdateResponse?.message || "Failed to delete payment from linked bill.");
-        setIsDeletingTransaction(false);
+      if (!deleteResponse?.success) {
+        alert(deleteResponse?.message || "Failed to delete payment.");
         return;
       }
 
-      const resolvedpurchase = {
-        ...linkedpurchase,
-        ...buildpurchaseUpdatePayload(linkedpurchase, {
-          paidAmount: nextPaidAmount,
-          cashReceived: nextPaidAmount,
-          paymentHistory: nextpurchasePaymentHistory,
-        }),
-        ...(purchaseUpdateResponse?.purchase || purchaseUpdateResponse?.data || {}),
-      };
-
-      setsupplierpurchases((prev) =>
-        prev.map((purchase) =>
-          String(purchase?._id || "") === String(linkedpurchase?._id || "")
-            ? { ...purchase, ...resolvedpurchase }
-            : purchase
-        )
-      );
-      syncCachedpurchase(resolvedpurchase);
-    }
-
-    if (removedSupplierPayment) {
-      const saved = await persistsupplierLedger(currentBills, nextPayments);
-      if (!saved) {
-        alert("Failed to delete payment.");
-        setIsDeletingTransaction(false);
-        return;
+      if (deleteResponse?.purchase?._id) {
+        syncCachedpurchase(deleteResponse.purchase);
       }
-    }
 
-    await loadsupplierData({ silent: true });
-    setDeleteTransactionTarget(null);
-    setIsDeletingTransaction(false);
+      clearSupplierLocalCaches(supplier, { clearPurchases: Boolean(linkedpurchase?._id) });
+      await loadsupplierData({ silent: true });
+      setDeleteTransactionTarget(null);
+    } catch (error) {
+      alert(error?.message || "Failed to delete payment.");
+    } finally {
+      setIsDeletingTransaction(false);
+    }
   };
 
   const openPaymentModal = (bill = null) => {
@@ -1555,17 +1586,18 @@ export default function supplierDetailPage() {
         )[0] || null;
 
     if (!bill) {
+      const supplierLevelPendingAmount = Math.max(Number(latestTransactionBalance || 0), 0);
       setSelectedBill({
         id: `TOTAL-${supplier?.name || "supplier"}`,
         reference: `TOTAL-${supplier?.name || "supplier"}`,
         description: `Outstanding balance for ${supplier?.name || "supplier"}`,
         date: new Date().toISOString().split("T")[0],
-        amountNumber: latestBillBalance,
+        amountNumber: supplierLevelPendingAmount,
         paidAmountNumber: 0,
-        remainingAmountNumber: latestBillBalance,
-        amount: formatRs(latestBillBalance),
+        remainingAmountNumber: supplierLevelPendingAmount,
+        amount: formatRs(supplierLevelPendingAmount),
         paidAmount: formatRs(0),
-        remainingAmount: formatRs(latestBillBalance),
+        remainingAmount: formatRs(supplierLevelPendingAmount),
         source: "supplier-total",
         linkedInvoiceReference: getBillReferenceValue(fallbackOutstandingBill),
       });
@@ -1587,196 +1619,172 @@ export default function supplierDetailPage() {
     if (!canEditsupplier || !supplier) return;
 
     const paidAmount = Number(paymentForm.partialAmount || 0);
-    if (!paidAmount || paidAmount <= 0 || paidAmount > Number(selectedBill?.remainingAmountNumber || 0)) {
-      alert("Partial amount must be > 0 and <= remaining amount");
+    if (!paidAmount || paidAmount <= 0) {
+      alert("Partial amount must be > 0.");
       return;
     }
 
-    const currentBills = displayBills
-      .map((bill) => ({
-        id: String(bill.id || ""),
-        date: bill.date || "",
-        description: bill.description || "",
-        amount: bill.amount,
-        paidAmount: bill.paidAmount,
-        status: bill.status,
-        dueDate: bill.dueDate || "",
-        notes: "",
-      }))
-      .map((bill) => ({ ...bill }));
-    const currentPayments = [...(Array.isArray(supplier.paymentHistory) ? supplier.paymentHistory : [])];
+    if (paidAmount > getSelectedBillPayableAmount(selectedBill)) {
+      alert("Partial amount must be <= payable amount.");
+      return;
+    }
+
     const paymentDate = paymentForm.date || new Date().toISOString().split("T")[0];
-    const updatedpurchasesMap = new Map();
-    let shouldPersistsupplierLedger = false;
+    let targetBill = selectedBill;
 
     if (selectedBill?.source === "supplier-total") {
-      const targetBill =
-        displayBills.find(
-          (bill) =>
-            String(getBillReferenceValue(bill)) ===
-            String(selectedBill?.linkedInvoiceReference || paymentForm.reference || "")
-        ) ||
-        [...displayBills].sort(
+      const outstandingBills = [...displayBills]
+        .filter((billEntry) => Number(billEntry?.remainingAmountNumber || 0) > 0)
+        .sort(
           (a, b) =>
-            getTransactionSortValue(b.transactionTimestamp, b.date) -
-            getTransactionSortValue(a.transactionTimestamp, a.date)
-        )[0] ||
-        null;
-
-      const targetIndex = currentBills.findIndex(
-        (entry) => String(entry?.id || "") === String(targetBill?.id || "")
+            getTransactionSortValue(a.transactionTimestamp, a.date) -
+            getTransactionSortValue(b.transactionTimestamp, b.date)
+        );
+      const payableAmount = getSelectedBillPayableAmount(selectedBill);
+      const outstandingBillsTotal = outstandingBills.reduce(
+        (sum, billEntry) => sum + Number(billEntry?.remainingAmountNumber || 0),
+        0
       );
+      let remainingToAllocate = paidAmount;
+      let touchedPurchasePayments = false;
 
-      if (targetIndex < 0 || !targetBill) {
-        alert("Bill not found for this supplier.");
-        return;
-      }
+      try {
+        for (const outstandingBill of outstandingBills) {
+          if (remainingToAllocate <= 0) {
+            break;
+          }
 
-      const currentPaid = parseAmount(currentBills[targetIndex]?.paidAmount);
-      const billAmount = parseAmount(currentBills[targetIndex]?.amount);
-      const linkedpurchase = findLinkedpurchase(targetBill);
-      const remainingForLinkedpurchase = getLinkedPurchaseRemainingAmount(linkedpurchase, targetBill);
-      if (linkedpurchase?._id && paidAmount > remainingForLinkedpurchase) {
-        alert(`Partial amount must be > 0 and <= ${remainingForLinkedpurchase}.`);
-        return;
-      }
-      const appliedpurchaseAmount = Math.min(remainingForLinkedpurchase, paidAmount);
+          const outstandingBillAmount = Number(outstandingBill?.remainingAmountNumber || 0);
+          const allocationAmount = Math.min(outstandingBillAmount, remainingToAllocate);
+          if (allocationAmount <= 0) {
+            continue;
+          }
 
-      if (linkedpurchase?._id && appliedpurchaseAmount > 0) {
-        const purchasePaymentResponse = await apiRequest(`/purchases/${linkedpurchase._id}/payment`, {
-          method: "POST",
-          data: {
-            paidAmount: appliedpurchaseAmount,
-            paymentMethod: paymentForm.method,
-            paymentDate,
-          },
-        });
-
-        if (!purchasePaymentResponse?.success) {
-          alert(purchasePaymentResponse?.message || `Failed to record payment for bill ${targetBill.reference || targetBill.id}.`);
-          return;
-        }
-
-        if (purchasePaymentResponse.purchase?._id) {
-          updatedpurchasesMap.set(String(purchasePaymentResponse.purchase._id), {
-            ...purchasePaymentResponse.purchase,
-            paymentStatus:
-              Number(purchasePaymentResponse.purchase?.paidAmount || 0) >= Number(purchasePaymentResponse.purchase?.totalAmount || 0)
-                ? "Paid"
-                : purchasePaymentResponse.purchase?.paymentStatus || "Pending",
+          const linkedOutstandingPurchase = findLinkedpurchase(outstandingBill);
+          const paymentResponse = await apiRequest("/supplierpayments/createSupplierPayment", {
+            method: "POST",
+            allowOfflineCrud: false,
+            data: {
+              supplierId: supplier.id || supplier._id,
+              purchaseId: linkedOutstandingPurchase?._id || "",
+              billId: getBillReferenceValue(outstandingBill),
+              paidAmount: allocationAmount,
+              paymentMethod: paymentForm.method,
+              paymentDate,
+              reference: String(paymentForm.reference || "").trim(),
+              notes: "",
+            },
           });
+
+          if (!paymentResponse?.success) {
+            alert(paymentResponse?.message || "Failed to record payment.");
+            return;
+          }
+
+          if (paymentResponse?.purchase?._id) {
+            touchedPurchasePayments = true;
+            syncCachedpurchase(paymentResponse.purchase);
+          }
+
+          remainingToAllocate -= allocationAmount;
         }
-      } else {
-        shouldPersistsupplierLedger = true;
+
+        if (remainingToAllocate > 0) {
+          const supplierRemainingBillAmount = Math.max(
+            payableAmount - outstandingBillsTotal,
+            0
+          );
+          if (supplierRemainingBillAmount <= 0) {
+            alert("No payable amount available for payment.");
+            return;
+          }
+
+          const remainingBillPaymentResponse = await apiRequest(
+            "/supplierpayments/createSupplierPayment",
+            {
+              method: "POST",
+              allowOfflineCrud: false,
+              data: {
+                supplierId: supplier.id || supplier._id,
+                purchaseId: "",
+                billId: REMAINING_BILL_REFERENCE,
+                paidAmount: remainingToAllocate,
+                paymentMethod: paymentForm.method,
+                paymentDate,
+                reference: String(paymentForm.reference || "").trim(),
+                notes: REMAINING_BILL_PAYMENT_NOTE,
+              },
+            }
+          );
+
+          if (!remainingBillPaymentResponse?.success) {
+            alert(remainingBillPaymentResponse?.message || "Failed to record payment.");
+            return;
+          }
+        }
+
+        clearSupplierLocalCaches(supplier, { clearPurchases: touchedPurchasePayments });
+        await loadsupplierData({ silent: true });
+        setShowPaymentModal(false);
+        setSelectedBill(null);
+      } catch (error) {
+        alert(error?.message || "Failed to record payment.");
       }
-
-      const appliedAmount = linkedpurchase?._id ? appliedpurchaseAmount : paidAmount;
-      const nextPaid = Math.min(currentPaid + appliedAmount, billAmount);
-
-      currentBills[targetIndex] = {
-        ...currentBills[targetIndex],
-        paidAmount: formatRs(nextPaid),
-        status: nextPaid >= billAmount ? "paid" : "partial",
-      };
-
-        if (shouldPersistsupplierLedger) {
-          currentPayments.unshift({
-            id: `PAY-${Date.now().toString().slice(-6)}-${targetIndex}`,
-            date: paymentDate,
-            amount: formatRs(appliedAmount),
-            method: paymentForm.method,
-            reference: String(paymentForm.reference || "").trim(),
-            billId: getBillReferenceValue(currentBills[targetIndex]),
-            notes: "",
-          });
-        }
-    } else {
-      const targetIndex = currentBills.findIndex(
-        (bill) => String(bill?.id || "") === String(selectedBill?.id || "")
-      );
-
-      if (targetIndex < 0) {
-        alert("Bill not found for this supplier.");
-        return;
-      }
-
-      const linkedpurchase = findLinkedpurchase(selectedBill);
-      if (linkedpurchase?._id) {
-        const linkedPurchaseRemaining = getLinkedPurchaseRemainingAmount(linkedpurchase, selectedBill);
-        if (paidAmount > linkedPurchaseRemaining) {
-          alert(`Partial amount must be > 0 and <= ${linkedPurchaseRemaining}.`);
-          return;
-        }
-
-        const purchasePaymentResponse = await apiRequest(`/purchases/${linkedpurchase._id}/payment`, {
-          method: "POST",
-          data: {
-            paidAmount,
-            paymentMethod: paymentForm.method,
-            paymentDate,
-          },
-        });
-
-        if (!purchasePaymentResponse?.success) {
-          alert(purchasePaymentResponse?.message || "Failed to record payment.");
-          return;
-        }
-
-        if (purchasePaymentResponse.purchase?._id) {
-          updatedpurchasesMap.set(String(purchasePaymentResponse.purchase._id), {
-            ...purchasePaymentResponse.purchase,
-            paymentStatus:
-              Number(purchasePaymentResponse.purchase?.paidAmount || 0) >= Number(purchasePaymentResponse.purchase?.totalAmount || 0)
-                ? "Paid"
-                : purchasePaymentResponse.purchase?.paymentStatus || "Pending",
-          });
-        }
-      } else {
-        shouldPersistsupplierLedger = true;
-      }
-
-      const currentPaid = parseAmount(currentBills[targetIndex]?.paidAmount);
-      const billAmount = parseAmount(currentBills[targetIndex]?.amount);
-      const nextPaid = currentPaid + paidAmount;
-
-      currentBills[targetIndex] = {
-        ...currentBills[targetIndex],
-        paidAmount: formatRs(nextPaid),
-        status: nextPaid >= billAmount ? "paid" : "partial",
-      };
-
-        if (shouldPersistsupplierLedger) {
-          currentPayments.unshift({
-            id: `PAY-${Date.now().toString().slice(-6)}`,
-            date: paymentDate,
-            amount: formatRs(paidAmount),
-            method: paymentForm.method,
-            reference: String(paymentForm.reference || "").trim(),
-            billId: getBillReferenceValue(currentBills[targetIndex]),
-            notes: "",
-          });
-        }
+      return;
     }
 
-    if (shouldPersistsupplierLedger) {
-      const saved = await persistsupplierLedger(currentBills, currentPayments);
-      if (!saved) {
-        alert("Failed to record payment.");
-        return;
-      }
+    if (!targetBill) {
+      alert("Bill not found for this supplier.");
+      return;
     }
 
-    if (updatedpurchasesMap.size > 0) {
-      setsupplierpurchases((prev) =>
-        prev.map((purchase) => updatedpurchasesMap.get(String(purchase?._id)) || purchase)
-      );
-      updatedpurchasesMap.forEach((purchase) => {
-        syncCachedpurchase(purchase);
+    const linkedpurchase = findLinkedpurchase(targetBill);
+    const maxPayableAmount = linkedpurchase?._id
+      ? getLinkedPurchaseRemainingAmount(linkedpurchase, targetBill)
+      : getSelectedBillPayableAmount(targetBill);
+
+    if (maxPayableAmount <= 0) {
+      alert("No payable amount available for payment.");
+      return;
+    }
+
+    if (paidAmount > maxPayableAmount) {
+      alert(`Partial amount must be <= ${maxPayableAmount}.`);
+      return;
+    }
+
+    try {
+      const paymentResponse = await apiRequest("/supplierpayments/createSupplierPayment", {
+        method: "POST",
+        allowOfflineCrud: false,
+        data: {
+          supplierId: supplier.id || supplier._id,
+          purchaseId: linkedpurchase?._id || "",
+          billId: getBillReferenceValue(targetBill),
+          paidAmount,
+          paymentMethod: paymentForm.method,
+          paymentDate,
+          reference: String(paymentForm.reference || "").trim(),
+          notes: "",
+        },
       });
-    }
 
-    setShowPaymentModal(false);
-    setSelectedBill(null);
+      if (!paymentResponse?.success) {
+        alert(paymentResponse?.message || "Failed to record payment.");
+        return;
+      }
+
+      if (paymentResponse?.purchase?._id) {
+        syncCachedpurchase(paymentResponse.purchase);
+      }
+
+      clearSupplierLocalCaches(supplier, { clearPurchases: Boolean(linkedpurchase?._id) });
+      await loadsupplierData({ silent: true });
+      setShowPaymentModal(false);
+      setSelectedBill(null);
+    } catch (error) {
+      alert(error?.message || "Failed to record payment.");
+    }
   };
 
   const handlePrintTransactions = () => {
@@ -1806,7 +1814,7 @@ export default function supplierDetailPage() {
     printWindow.document.write(`
       <html>
         <head>
-          <title>${supplier.name} Bills Report</title>
+          <title>${toTitleCase(supplier.name)} Bills Report</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
             h1 { margin: 0 0 8px; }
@@ -1820,7 +1828,7 @@ export default function supplierDetailPage() {
         <body>
           <h1>supplier Bills Report</h1>
           <div class="box">
-            <div class="row"><strong>supplier</strong><span>${supplier.name}</span></div>
+            <div class="row"><strong>supplier</strong><span>${toTitleCase(supplier.name)}</span></div>
             <div class="row"><strong>Date Range</strong><span>${formatDate(billDateRange.from)} to ${formatDate(billDateRange.to)}</span></div>
             <div class="row"><strong>Total Bill Amount</strong><span>${formatRs(totalBillAmount)}</span></div>
             <div class="row"><strong>Outstanding</strong><span>${formatRs(totalOutstandingAmount)}</span></div>
@@ -1889,7 +1897,8 @@ export default function supplierDetailPage() {
                   {String(supplier.name || "C").charAt(0)}
                 </div>
                 <div>
-                  <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{supplier.name}</h1>
+                  <p className="text-xl font-bold uppercase tracking-wide text-blue-600">Supplier Details</p>
+                  <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{toTitleCase(supplier.name)}</h1>
                   <p className="text-sm text-gray-500 dark:text-gray-400">View and manage supplier information</p>
                 </div>
               </div>
@@ -1908,7 +1917,7 @@ export default function supplierDetailPage() {
             </div>
             <div className="rounded-2xl bg-amber-50 px-4 py-3 dark:bg-amber-900/20">
               <p className="text-xs text-amber-700 dark:text-amber-300">Total Pending</p>
-              <p className="text-lg font-bold text-amber-900 dark:text-white">{formatRs(totalOutstandingAmount)}</p>
+              <p className="text-lg font-bold text-amber-900 dark:text-white">{formatRs(latestTransactionBalance)}</p>
             </div>
             <div className="rounded-2xl bg-violet-50 px-4 py-3 dark:bg-violet-900/20">
               <p className="text-xs text-violet-700 dark:text-violet-300">Payments</p>
@@ -1938,31 +1947,33 @@ export default function supplierDetailPage() {
 
           {activeTab === "bills" && (
             <div className="mt-6 space-y-6">
-              <div className="flex flex-col gap-4 rounded-2xl bg-gray-50 p-4 dark:bg-gray-700/40 lg:flex-row lg:items-end lg:justify-between">
-                <div className="flex flex-wrap items-end gap-4">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">From</label>
+              <div className="flex flex-col gap-4 rounded-2xl bg-gray-50 p-4 dark:bg-gray-700/40">
+                <div className="flex flex-nowrap items-center gap-3 overflow-x-auto">
+                  <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">From</label>
                     <input type="date" value={billDateRange.from} onChange={(e) => setBillDateRange((prev) => ({ ...prev, from: e.target.value }))} className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800" />
                   </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">To</label>
+                  <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+                    <label className="text-xs font-medium text-gray-500 dark:text-gray-400">To</label>
                     <input type="date" value={billDateRange.to} onChange={(e) => setBillDateRange((prev) => ({ ...prev, to: e.target.value }))} className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800" />
                   </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={() => openPaymentModal()}
-                    disabled={!canEditsupplier || totalOutstandingAmount <= 0}
-                    className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-emerald-500 px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Wallet className="h-4 w-4" />
-                    Add Payment
-                  </button>
-                  <button onClick={handlePrintTransactions} className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                  {shouldShowAddPaymentButton ? (
+                    <button
+                      onClick={() => openPaymentModal()}
+                      disabled={!canEditsupplier}
+                      className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-emerald-500 px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Wallet className="h-4 w-4" />
+                      Add Payment
+                    </button>
+                  ) : null}
+                  <button onClick={handlePrintTransactions} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
                     <Printer className="h-4 w-4" />
                     Print Total Bills
                   </button>
-                  <p className="text-sm font-semibold text-gray-900 dark:text-white">Total Bill Amount: {formatRs(totalBillAmount)}</p>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-left text-sm font-semibold text-gray-900 dark:text-white">Total Bill Amount: {formatRs(totalBillAmount)}</p>
                 </div>
               </div>
 
@@ -2006,7 +2017,7 @@ export default function supplierDetailPage() {
                         paginatedTransactions.map((entry) => (
                           <tr key={entry.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
                             <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{formatDate(entry.date)}</td>
-                            <td className="px-2.5 py-2.5 text-sm font-medium text-gray-900 dark:text-white">{entry.type}</td>
+                            <td className="px-2.5 py-2.5 text-sm font-medium text-gray-900 dark:text-white">{entry.typeLabel || entry.type}</td>
                             <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{entry.reference || "N/A"}</td>
                             <td className="w-[160px] min-w-[160px] px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">
                               <div
@@ -2034,8 +2045,8 @@ export default function supplierDetailPage() {
                                   type="button"
                                   onClick={requestEditBlankBill}
                                   className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-200 text-blue-600 transition hover:bg-blue-50 dark:border-blue-900/60 dark:text-blue-300 dark:hover:bg-blue-950/30"
-                                  aria-label="Edit remaining bill credit"
-                                  title="Edit remaining bill"
+                                  aria-label="Edit old bill credit"
+                                  title="Edit old bill"
                                 >
                                   <Edit3 className="h-4 w-4" />
                                 </button>
@@ -2174,7 +2185,7 @@ export default function supplierDetailPage() {
               <div className="rounded-2xl border border-gray-200 p-5 dark:border-gray-700">
                 <h3 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">supplier Profile</h3>
                 <div className="space-y-4">
-                  <div className="flex items-start gap-3"><User className="mt-0.5 h-5 w-5 text-gray-400" /><div><p className="text-sm text-gray-500">Name</p><p className="font-medium text-gray-900 dark:text-white">{supplier.name}</p></div></div>
+                  <div className="flex items-start gap-3"><User className="mt-0.5 h-5 w-5 text-gray-400" /><div><p className="text-sm text-gray-500">Name</p><p className="font-medium text-gray-900 dark:text-white">{toTitleCase(supplier.name)}</p></div></div>
                   <div className="flex items-start gap-3"><IdCard className="mt-0.5 h-5 w-5 text-gray-400" /><div><p className="text-sm text-gray-500">CNIC</p><p className="font-medium text-gray-900 dark:text-white">{supplier.cnic || "N/A"}</p></div></div>
                   <div className="flex items-start gap-3"><Phone className="mt-0.5 h-5 w-5 text-gray-400" /><div><p className="text-sm text-gray-500">Phone</p><p className="font-medium text-gray-900 dark:text-white">{supplier.phone || "N/A"}</p></div></div>
                   <div className="flex items-start gap-3"><Mail className="mt-0.5 h-5 w-5 text-gray-400" /><div><p className="text-sm text-gray-500">Email</p><p className="font-medium text-gray-900 dark:text-white">{supplier.email || "N/A"}</p></div></div>
@@ -2201,7 +2212,7 @@ export default function supplierDetailPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl dark:bg-gray-800">
             <div className="p-5">
-              <h3 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">Edit remaining bill</h3>
+              <h3 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">Edit old bill</h3>
               <form onSubmit={handleSaveBlankBillCredit} className="space-y-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Debit Amount</label>
@@ -2241,11 +2252,11 @@ export default function supplierDetailPage() {
               <h3 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">Edit Payment</h3>
               <form onSubmit={handleEditPaymentTransaction} className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Balance</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Payable Amount</label>
                   <input
                     type="text"
                     readOnly
-                    value={formatRs(editTransactionTarget.balance || 0)}
+                    value={formatRs(getEditablePaymentPayableAmount(editTransactionTarget))}
                     className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700"
                   />
                 </div>
@@ -2254,7 +2265,7 @@ export default function supplierDetailPage() {
                   <input
                     type="number"
                     min="0"
-                    max={Number(editTransactionTarget.linkedBillRemaining || 0) + Number(editTransactionTarget.credit || 0)}
+                    max={getEditablePaymentPayableAmount(editTransactionTarget)}
                     value={paymentForm.partialAmount}
                     onChange={(e) => setPaymentForm((prev) => ({ ...prev, partialAmount: e.target.value }))}
                     className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800"
@@ -2361,12 +2372,12 @@ export default function supplierDetailPage() {
               <h3 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">Add Payment</h3>
               <form onSubmit={handleRecordPayment} className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Balance (Debit - Credit, if credit is empty then 0)</label>
-                  <input type="text" readOnly value={formatRs(latestBillBalance)} className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700" />
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Payable Amount</label>
+                  <input type="text" readOnly value={formatRs(getSelectedBillPayableAmount(selectedBill))} className="w-full rounded-lg border border-gray-300 bg-gray-100 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700" />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Add Payment</label>
-                  <input type="number" min="0" max={selectedBill.remainingAmountNumber} value={paymentForm.partialAmount} onChange={(e) => setPaymentForm((prev) => ({ ...prev, partialAmount: e.target.value }))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800" />
+                  <input type="number" min="0" max={getSelectedBillPayableAmount(selectedBill)} value={paymentForm.partialAmount} onChange={(e) => setPaymentForm((prev) => ({ ...prev, partialAmount: e.target.value }))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-800" />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Remaining Amount</label>
@@ -2375,7 +2386,7 @@ export default function supplierDetailPage() {
                     readOnly
                     value={formatRs(
                       Math.max(
-                        Number(selectedBill.remainingAmountNumber || 0) - Number(paymentForm.partialAmount || 0),
+                        getSelectedBillPayableAmount(selectedBill) - Number(paymentForm.partialAmount || 0),
                         0
                       )
                     )}

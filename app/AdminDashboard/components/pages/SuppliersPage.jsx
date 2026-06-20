@@ -59,6 +59,7 @@ const defaultStatistics = {
   nextPaymentDue: "",
   averagePaymentDays: 0,
 };
+const REMAINING_BILL_MARKER = "__remaining_bill__";
 
 const buildStatisticsFromBills = (bills = []) => {
   const normalizedBills = Array.isArray(bills) ? bills : [];
@@ -159,6 +160,16 @@ const normalizePurchase = (purchase) => ({
   supplier: purchase.supplier || purchase.supplierName || "",
 });
 
+const normalizeSupplierPayment = (payment = {}) => ({
+  ...payment,
+  id: String(payment?._id || payment?.id || payment?.paymentId || "").trim(),
+  supplierId: String(payment?.supplierId || "").trim(),
+  supplier: payment?.supplier || payment?.supplierName || "",
+  supplierName: payment?.supplierName || payment?.supplier || "",
+  amount: Number(payment?.paidAmount ?? payment?.amount ?? 0),
+  notes: String(payment?.notes || "").trim(),
+});
+
 const formatRs = (amount) => `Rs. ${Number(amount || 0).toLocaleString("en-IN")}`;
 
 const parseAmount = (value) => {
@@ -166,6 +177,51 @@ const parseAmount = (value) => {
   const cleaned = String(value || "").replace(/[^0-9-]/g, "");
   return cleaned ? Number(cleaned) : 0;
 };
+
+const getSupplierAccountPendingAmount = (supplier, purchaseStats = null, supplierPayments = []) => {
+  const supplierBills = Array.isArray(supplier?.bills) ? supplier.bills : [];
+  const totalRemainingFromBills = supplierBills.reduce((sum, bill) => {
+    const explicitRemaining = parseAmount(bill?.remainingAmount);
+    if (explicitRemaining > 0) {
+      return sum + explicitRemaining;
+    }
+
+    const billAmount = parseAmount(bill?.amount);
+    const billPaidAmount = parseAmount(bill?.paidAmount);
+    return sum + Math.max(billAmount - billPaidAmount, 0);
+  }, 0);
+  const totalDebitFromBills = supplierBills.reduce(
+    (sum, bill) => sum + parseAmount(bill?.amount),
+    0
+  );
+  const supplierPaymentHistory =
+    Array.isArray(supplierPayments) && supplierPayments.length > 0
+      ? supplierPayments
+      : Array.isArray(supplier?.paymentHistory)
+        ? supplier.paymentHistory
+        : [];
+  const totalCredit = supplierPaymentHistory.reduce((sum, payment) => {
+    if (String(payment?.notes || "").trim() === REMAINING_BILL_MARKER) {
+      return sum;
+    }
+    return sum + parseAmount(payment?.amount ?? payment?.paidAmount);
+  }, 0);
+  const fallbackDebit =
+    parseAmount(purchaseStats?.totalAmount) ||
+    parseAmount(supplier?.statistics?.totalAmount);
+
+  if (supplierBills.length > 0 && totalCredit <= 0) {
+    return Math.max(totalRemainingFromBills, 0);
+  }
+
+  const totalDebit = totalDebitFromBills > 0 ? totalDebitFromBills : fallbackDebit;
+  return Math.max(totalDebit - totalCredit, 0);
+};
+
+const hasSupplierAccountSnapshot = (supplier = {}) =>
+  Array.isArray(supplier?.bills) && supplier.bills.length > 0 ||
+  Array.isArray(supplier?.paymentHistory) && supplier.paymentHistory.length > 0 ||
+  typeof supplier?.totalDue !== "undefined";
 
 const emptySupplierForm = {
   name: "",
@@ -189,6 +245,7 @@ export default function SuppliersPage() {
   const router = useRouter();
   const [suppliers, setSuppliers] = useState([]);
   const [purchases, setPurchases] = useState([]);
+  const [supplierPayments, setSupplierPayments] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All Status");
   const [selectedBillStatus, setSelectedBillStatus] = useState("All Bills");
@@ -284,6 +341,23 @@ export default function SuppliersPage() {
     fetchPurchases();
   }, []);
 
+  useEffect(() => {
+    const fetchSupplierPayments = async () => {
+      try {
+        const response = await apiRequest("/supplierpayments", { method: "GET" });
+        if (response?.success) {
+          setSupplierPayments(
+            (Array.isArray(response?.supplierpayments) ? response.supplierpayments : []).map(normalizeSupplierPayment)
+          );
+        }
+      } catch (error) {
+        console.error("Fetch Supplier Payments Error:", error);
+      }
+    };
+
+    fetchSupplierPayments();
+  }, []);
+
   const purchaseCountBySupplier = purchases.reduce((map, purchase) => {
     const key = String(purchase.supplier || "").trim();
     if (!key) return map;
@@ -327,16 +401,38 @@ export default function SuppliersPage() {
     const key = String(supplier.name || "").trim();
     const purchaseStats = purchaseStatsBySupplier.get(key);
     const purchaseCount = purchaseCountBySupplier.get(key) || 0;
+    const supplierLookupKeys = buildSupplierLookupKeys(supplier);
+    const supplierIds = [supplier?._id, supplier?.id].map((value) => String(value || "").trim()).filter(Boolean);
+    const matchedSupplierPayments = supplierPayments.filter((payment) => {
+      const paymentLookupKeys = buildSupplierLookupKeys(payment);
+      return (
+        (payment.supplierId && supplierIds.includes(String(payment.supplierId || "").trim())) ||
+        paymentLookupKeys.some((keyValue) => supplierLookupKeys.includes(keyValue))
+      );
+    });
+    const accountPendingAmount = getSupplierAccountPendingAmount(
+      supplier,
+      purchaseStats,
+      matchedSupplierPayments
+    );
+    const supplierSnapshotPendingAmount = Math.max(
+      parseAmount(supplier?.totalDue ?? supplier?.statistics?.pendingAmount),
+      0
+    );
+    const effectivePendingAmount = hasSupplierAccountSnapshot(supplier)
+      ? Math.max(accountPendingAmount, supplierSnapshotPendingAmount)
+      : accountPendingAmount;
 
     return {
       ...supplier,
       purchaseCount,
+      accountPendingAmount: effectivePendingAmount,
       purchaseStats: purchaseStats
         ? {
             ...purchaseStats,
             totalAmount: formatRs(purchaseStats.totalAmount),
             paidAmount: formatRs(purchaseStats.paidAmount),
-            pendingAmount: formatRs(purchaseStats.pendingAmount),
+            pendingAmount: formatRs(effectivePendingAmount),
           }
         : null,
     };

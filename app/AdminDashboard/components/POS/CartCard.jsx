@@ -183,6 +183,11 @@ const URDU_RECEIPT_FONT_STACK =
 
 const formatReceiptSequence = (value) => String(Math.max(Number(value) || 1, 1)).padStart(2, "0");
 
+const toTitleCase = (value = "") =>
+  String(value)
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
 const formatReceiptDate = (value = new Date()) => {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -310,7 +315,7 @@ const buildReceiptHtml = ({
           border-bottom: 1px solid #000;
           border-left: 0;
           border-right: 0;
-          padding: 4px;
+          padding: 3px 3px;
           vertical-align: top;
         }
         .items-table tr.product-row td:not(.item-name) {
@@ -332,6 +337,13 @@ const buildReceiptHtml = ({
         }
         .items-table td.item-name {
           font-family: ${URDU_RECEIPT_FONT_STACK};
+          color: #000;
+          line-height: 1;
+        }
+        .items-table td.item-name .item-subtext {
+          display: block;
+          margin-top: 1px;
+          line-height: 1;
         }
         .items-table th:nth-child(2),
         .items-table td:nth-child(2) {
@@ -459,7 +471,7 @@ const buildReceiptHtml = ({
                       const freeQty = Math.max(Math.floor(Number(item.freeQty) || 0), 0);
                       const salePrice = getSelectedSalePrice(item);
                       const lineTotal = getLineTotal(item);
-                      const itemLabel = `${item.name || "-"}${freeQty > 0 ? `<div class="item-subtext">Free: ${freeQty}</div>` : ""}`;
+                      const itemLabel = `${toTitleCase(item.name || "-")}${freeQty > 0 ? `<div class="item-subtext">Free: ${freeQty}</div>` : ""}`;
                       return `
                         <tr class="product-row" key="${item._id || item.id || idx}">
                           <td class="item-name">${itemLabel}</td>
@@ -768,6 +780,20 @@ export default function CartCard({ cart, removeItem, increaseQty, decreaseQty })
         paidAmount: effectivePaidAmount,
         returnAmount,
         customerName: String(selectedCustomer?.name || "Walk-in"),
+        customerId: selectedCustomer?.id || selectedCustomer?._id || "",
+        customerCnic: String(selectedCustomer?.cnic || ""),
+        customerPhone: String(selectedCustomer?.phone || ""),
+        customerMobile: String(selectedCustomer?.mobile || selectedCustomer?.phone || ""),
+        selectedCustomer: selectedCustomer?.id
+          ? {
+              id: selectedCustomer.id || selectedCustomer?._id || "",
+              _id: selectedCustomer?._id || selectedCustomer?.id || "",
+              name: selectedCustomer?.name || "",
+              cnic: selectedCustomer?.cnic || "",
+              phone: selectedCustomer?.phone || "",
+              mobile: selectedCustomer?.mobile || selectedCustomer?.phone || "",
+            }
+          : null,
         paymentMethod: isCreditCustomer ? "Credit" : "Cash",
         paymentStatus: isCreditCustomer ? "Pending" : "Paid",
       };

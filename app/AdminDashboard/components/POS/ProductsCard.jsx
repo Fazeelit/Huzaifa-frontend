@@ -55,6 +55,11 @@ const getDisplayQty = (item) => {
   return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
 };
 
+const toTitleCase = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
 export default function ProductsCard({
   products = [],
   cart = [],
@@ -273,7 +278,7 @@ export default function ProductsCard({
                     }`}
                   >
                     <div className="flex min-h-10 items-center justify-between gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium leading-7" style={urduNameStyle}>{product.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium leading-7" style={urduNameStyle}>{toTitleCase(product.name)}</span>
                       <span
                         className={`shrink-0 text-xs font-semibold ${
                           highlightedProductIndex === index ? "text-white/90" : "text-blue-600"
@@ -350,7 +355,7 @@ export default function ProductsCard({
                     <tr key={item.key || item._id || item.id} className="align-top">
                        <td className="px-4 py-2.5 sm:px-3">
                          <p className="break-words text-xs font-semibold text-slate-900" style={urduNameStyle}>
-                          {item.name}
+                          {toTitleCase(item.name)}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
                           Stock: {remainingDisplayStock.toLocaleString()} | Units: {availableStockInUnit.toLocaleString()}

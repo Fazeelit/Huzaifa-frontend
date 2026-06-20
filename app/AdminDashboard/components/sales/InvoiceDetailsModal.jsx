@@ -109,11 +109,8 @@ export default function InvoiceDetailsModal({
   const invoiceTotal = rows.reduce((sum, row) => sum + row.total, 0);
   const discount = toNumber(sale.discount);
   const netTotal = Math.max(invoiceTotal - discount, 0);
-  const paidAmount = toNumber(sale.paidAmount);
-  const returnedAmount = rows.reduce(
-    (sum, row) => sum + toNumber(row.returnedQty) * toNumber(row.price),
-    0
-  );
+  const paidAmount = 0;
+  const returnedAmount = 0;
 
   const selectedIndexes = Object.entries(selectedRows)
     .filter(([, checked]) => checked)

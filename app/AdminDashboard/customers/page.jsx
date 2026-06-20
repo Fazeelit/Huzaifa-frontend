@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -62,7 +63,48 @@ const tagFilters = [
 
 const toNumber = (value) => {
   if (typeof value === "number") return value;
-  return parseFloat(String(value || "").replace(/[^\d.]/g, "")) || 0;
+  const normalized = String(value || "").replace(/,/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+};
+
+const parseAmount = (value) => {
+  if (typeof value === "number") return value;
+  const normalized = String(value || "").replace(/,/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+};
+
+const REMAINING_BILL_MARKER = "__remaining_bill__";
+
+const getCustomerBillsPendingAmount = (customer = {}) =>
+  (Array.isArray(customer?.bills) ? customer.bills : []).reduce(
+    (sum, bill) =>
+      sum +
+      Math.max(
+        parseAmount(bill?.remainingAmount) ||
+          parseAmount(bill?.balance) ||
+          (parseAmount(bill?.amount) - parseAmount(bill?.paidAmount)),
+        0
+      ),
+    0
+  );
+
+const getRemainingBillDebit = (payments = []) =>
+  (Array.isArray(payments) ? payments : []).reduce((sum, payment) => {
+    if (String(payment?.notes || "").trim() !== REMAINING_BILL_MARKER) {
+      return sum;
+    }
+
+    return sum + parseAmount(payment?.paidAmount ?? payment?.amount);
+  }, 0);
+
+const getCustomerSalePendingAmount = (sale = {}) => {
+  const totalAmount = parseAmount(
+    sale?.totalAmount ?? sale?.totalPrice ?? sale?.total ?? getCustomerSaleTotal(sale)
+  );
+  const paidAmount = parseAmount(sale?.paidAmount ?? sale?.cashReceived);
+  return Math.max(totalAmount - paidAmount, 0);
 };
 
 const formatDate = (value) => {
@@ -100,12 +142,49 @@ const normalizeCustomer = (customer) => ({
   purchaseCount: Number(customer.totalPurchases ?? customer.orders ?? 0) || 0,
   totalSpent: toNumber(customer.totalSpent),
   accountBalance: toNumber(customer.accountBalance),
+  totalDue: toNumber(customer.totalDue),
+  pendingAmount: toNumber(customer.pendingAmount),
+  balance: toNumber(customer.balance),
   creditLimit: toNumber(customer.creditLimit),
   lastPurchase: customer.lastPurchase || "No purchases yet",
   tags: Array.isArray(customer.tags) ? customer.tags : [],
   status: String(customer.status || "active").toLowerCase(),
   satisfaction: Number(customer.satisfaction) || 0,
+  bills: Array.isArray(customer.bills) ? customer.bills : [],
+  exactPendingAmount: toNumber(
+    customer.exactPendingAmount ??
+      customer.totalDue ??
+      customer.accountBalance ??
+      customer.pendingAmount ??
+      customer.balance
+  ),
 });
+
+const getCustomerPendingAmount = (customer = {}, matchedSales = []) => {
+  const savedPendingAmountCandidates = [
+    customer?.totalDue,
+    customer?.pendingAmount,
+    customer?.balance,
+    customer?.accountBalance,
+  ]
+    .map((value) => toNumber(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const savedPendingAmount = savedPendingAmountCandidates.length > 0 ? Math.max(...savedPendingAmountCandidates) : 0;
+  const remainingBillDebit = toNumber(customer?.remainingBillDebit);
+
+  const salesPendingAmount = matchedSales.reduce(
+    (sum, sale) => sum + getCustomerSalePendingAmount(sale),
+    0
+  );
+  const latestTransactionBalance = Math.max(salesPendingAmount + remainingBillDebit, 0);
+
+  if (latestTransactionBalance > 0) {
+    return latestTransactionBalance;
+  }
+
+  const billsPendingAmount = getCustomerBillsPendingAmount(customer);
+  return Math.max(savedPendingAmount, billsPendingAmount, remainingBillDebit, 0);
+};
 
 const extractSalesArray = (response) => {
   if (Array.isArray(response?.sales)) return response.sales;
@@ -121,26 +200,69 @@ const getCustomerTimestamp = (customer) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const normalizeCustomerLookupValue = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const buildCustomerLookupKeys = (customerLike = {}) => {
+  const customerObject =
+    customerLike?.customer && typeof customerLike.customer === "object"
+      ? customerLike.customer
+      : customerLike?.selectedCustomer && typeof customerLike.selectedCustomer === "object"
+        ? customerLike.selectedCustomer
+        : {};
+
+  const keys = [
+    customerLike?.name,
+    customerLike?.customerName,
+    customerLike?.companyName,
+    customerLike?.company,
+    customerLike?.contactPerson,
+    customerObject?.name,
+    customerObject?.companyName,
+    customerObject?.company,
+    customerObject?.contactPerson,
+  ]
+    .map(normalizeCustomerLookupValue)
+    .filter(Boolean)
+    .filter((value) => value !== "walk-in" && value !== "walk in");
+
+  return [...new Set(keys)];
+};
+
 const matchesCustomerSale = (sale, customer) => {
   const saleCustomer = sale?.customer || sale?.selectedCustomer || {};
   const saleCustomerId = sale?.customerId || saleCustomer?._id || saleCustomer?.id || "";
   const targetId = customer?.id || customer?._id || "";
-  const saleName = String(sale?.customerName || saleCustomer?.name || "")
-    .trim()
-    .toLowerCase();
-  const targetName = String(customer?.name || "")
-    .trim()
-    .toLowerCase();
-  const saleCnic = String(saleCustomer?.cnic || "").trim();
+  const saleCnic = String(sale?.cnic || sale?.customerCnic || saleCustomer?.cnic || "").trim();
   const targetCnic = String(customer?.cnic || "").trim();
-  const salePhone = String(saleCustomer?.phone || saleCustomer?.mobile || "").trim();
-  const targetPhone = String(customer?.phone || customer?.mobile || "").trim();
+  const salePhone = String(
+    sale?.phone ||
+      sale?.mobile ||
+      sale?.customerPhone ||
+      sale?.customerMobile ||
+      saleCustomer?.phone ||
+      saleCustomer?.mobile ||
+      ""
+  )
+    .replace(/\D/g, "")
+    .trim();
+  const targetPhone = String(customer?.phone || customer?.mobile || "")
+    .replace(/\D/g, "")
+    .trim();
+  const saleLookupKeys = buildCustomerLookupKeys({
+    ...sale,
+    customer: saleCustomer,
+  });
+  const customerLookupKeys = buildCustomerLookupKeys(customer);
 
   return (
     (targetId && saleCustomerId && String(saleCustomerId) === String(targetId)) ||
     (targetCnic && saleCnic && saleCnic === targetCnic) ||
     (targetPhone && salePhone && salePhone === targetPhone) ||
-    (targetName && saleName === targetName)
+    saleLookupKeys.some((key) => customerLookupKeys.includes(key))
   );
 };
 
@@ -185,6 +307,9 @@ const getCustomerSaleTotal = (sale = {}) => {
 };
 
 export default function Customers() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedCustomerId = searchParams.get("customerId");
   const [searchTerm, setSearchTerm] = useState("");
   const [customers, setCustomers] = useState([]);
   const [sales, setSales] = useState([]);
@@ -245,7 +370,75 @@ export default function Customers() {
       try {
         const res = await apiRequest("/customers", { method: "GET" });
         if (res.success) {
-          setCustomers((res.customers || []).map(normalizeCustomer));
+          const baseCustomers = (res.customers || []).map(normalizeCustomer);
+          const refreshedCustomers = await Promise.all(
+            baseCustomers.map(async (customer) => {
+              const customerId = String(customer?.id || "").trim();
+              if (!customerId) {
+                return customer;
+              }
+
+              try {
+                const detailResponse = await apiRequest(`/customers/${customerId}`, {
+                  method: "GET",
+                  suppressErrorToast: true,
+                  suppressErrorLog: true,
+                });
+
+                if (detailResponse?.success && detailResponse?.customer) {
+                  const paymentsResponse = await apiRequest(
+                    `/customerpayments/getCustomerPaymentsByCustomer/${customerId}`,
+                    {
+                      method: "GET",
+                      suppressErrorToast: true,
+                      suppressErrorLog: true,
+                    }
+                  );
+                  const customerPayments = Array.isArray(paymentsResponse?.customerpayments)
+                    ? paymentsResponse.customerpayments
+                    : Array.isArray(paymentsResponse?.data?.customerpayments)
+                      ? paymentsResponse.data.customerpayments
+                      : Array.isArray(paymentsResponse?.data)
+                        ? paymentsResponse.data
+                        : Array.isArray(paymentsResponse)
+                          ? paymentsResponse
+                          : [];
+                  const mergedCustomer = {
+                    ...customer,
+                    ...detailResponse.customer,
+                  };
+                  const remainingBillDebit = getRemainingBillDebit(customerPayments);
+                  const ledgerPendingAmount =
+                    getCustomerBillsPendingAmount(mergedCustomer) + remainingBillDebit;
+                  const syncedPendingAmount = Math.max(
+                    ledgerPendingAmount,
+                    toNumber(mergedCustomer?.totalDue),
+                    toNumber(mergedCustomer?.accountBalance),
+                    toNumber(mergedCustomer?.pendingAmount),
+                    toNumber(mergedCustomer?.balance),
+                    remainingBillDebit,
+                    0
+                  );
+
+                  return normalizeCustomer({
+                    ...mergedCustomer,
+                    remainingBillDebit,
+                    totalDue: syncedPendingAmount,
+                    accountBalance: syncedPendingAmount,
+                    pendingAmount: syncedPendingAmount,
+                    balance: syncedPendingAmount,
+                    exactPendingAmount: syncedPendingAmount,
+                  });
+                }
+              } catch {
+                // Keep the list usable even if a detail refresh fails for one customer.
+              }
+
+              return customer;
+            })
+          );
+
+          setCustomers(refreshedCustomers);
         } else {
           console.error("Failed to fetch customers:", res.message);
         }
@@ -255,6 +448,28 @@ export default function Customers() {
     };
 
     fetchCustomers();
+
+    const handleFocus = () => {
+      fetchCustomers();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchCustomers();
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      fetchCustomers();
+    }, 15000);
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -277,21 +492,54 @@ export default function Customers() {
       (sum, sale) => sum + getCustomerSaleTotal(sale),
       0
     );
+    const resolvedPendingAmount = (() => {
+      const refreshedPendingCandidates = [
+        customer?.totalDue,
+        customer?.accountBalance,
+        customer?.pendingAmount,
+        customer?.balance,
+        customer?.remainingBillDebit,
+      ]
+        .map((value) => toNumber(value))
+        .filter((value) => Number.isFinite(value) && value > 0);
+
+      if (refreshedPendingCandidates.length > 0) {
+        return Math.max(...refreshedPendingCandidates);
+      }
+
+      return getCustomerPendingAmount(customer, matchedSales);
+    })();
     const latestSale = matchedSales
       .slice()
       .sort((a, b) => new Date(getSaleDateValue(b) || 0).getTime() - new Date(getSaleDateValue(a) || 0).getTime())[0];
 
-    return {
-      ...customer,
-      purchaseCount: matchedSales.length,
-      totalSpent,
-      lastPurchase: latestSale ? (getSaleDateValue(latestSale) || customer.lastPurchase) : "No purchases yet",
-    };
+      return {
+        ...customer,
+        purchaseCount: matchedSales.length,
+        totalSpent,
+        accountBalance: resolvedPendingAmount,
+        totalDue: resolvedPendingAmount,
+        exactPendingAmount: resolvedPendingAmount,
+        lastPurchase: latestSale ? (getSaleDateValue(latestSale) || customer.lastPurchase) : "No purchases yet",
+      };
   });
 
   const resolvedViewCustomer = viewCustomer
     ? enrichedCustomers.find((customer) => String(customer.id) === String(viewCustomer.id)) || viewCustomer
     : null;
+
+  useEffect(() => {
+    if (!requestedCustomerId || customers.length === 0) return;
+
+    const matchedCustomer =
+      enrichedCustomers.find((customer) => String(customer.id) === String(requestedCustomerId)) ||
+      customers.find((customer) => String(customer.id) === String(requestedCustomerId));
+
+    if (!matchedCustomer) return;
+    if (String(viewCustomer?.id) === String(matchedCustomer.id)) return;
+
+    setViewCustomer(matchedCustomer);
+  }, [customers, enrichedCustomers, requestedCustomerId, viewCustomer]);
 
   const filteredCustomers = enrichedCustomers
     .filter((customer) => {
@@ -363,18 +611,26 @@ export default function Customers() {
     : [];
 
   const customerPurchasedProducts = customerSales.flatMap((sale) =>
-    (Array.isArray(sale?.items) ? sale.items : []).map((item, index) => ({
+    (Array.isArray(sale?.items)
+      ? sale.items
+      : Array.isArray(sale?.products)
+        ? sale.products
+        : []
+    ).map((item, index) => ({
       id: `${sale?._id || sale?.invoiceNo || "sale"}-${item?.productId || index}`,
       saleId: sale?._id || "",
       invoiceNo: sale?.invoiceNo || "-",
       date: formatDate(sale?.createdAt || sale?.timestamp) || "-",
-      productName: item?.productName || "-",
+      productName: item?.productName || item?.name || "-",
       brand: item?.brand || "-",
       category: item?.category || "-",
       serialNumber: item?.serialNumber || "-",
-      quantity: Number(item?.quantity) || 0,
-      unitPrice: Number(item?.unitPrice) || 0,
-      totalPrice: Number(item?.totalPrice) || 0,
+      quantity: Number(item?.quantity ?? item?.qty) || 0,
+      unitPrice: Number(item?.unitPrice ?? item?.salePrice ?? item?.price) || 0,
+      totalPrice:
+        Number(item?.totalPrice ?? item?.total) ||
+        (Number(item?.quantity ?? item?.qty) || 0) *
+          (Number(item?.unitPrice ?? item?.salePrice ?? item?.price) || 0),
       status: sale?.status || "Completed",
       storage:
         [item?.selectedStorageType, item?.selectedStorageCapacity].filter(Boolean).join(" ") || "-",
@@ -383,7 +639,7 @@ export default function Customers() {
   );
 
   const customerBills = customerSales.map((sale, index) => {
-    const totalAmount = Number(sale?.totalAmount ?? sale?.total) || 0;
+    const totalAmount = Number(sale?.totalAmount ?? sale?.total ?? getCustomerSaleTotal(sale)) || 0;
     const paidAmount = Number(sale?.paidAmount ?? sale?.cashReceived) || 0;
     const remainingAmount = Math.max(totalAmount - paidAmount, 0);
     const saleItems = Array.isArray(sale?.items)
@@ -401,7 +657,7 @@ export default function Customers() {
       saleId: sale?._id || "",
       billId: sale?.invoiceNo || sale?._id || `BILL-${index + 1}`,
       date: formatDate(sale?.createdAt || sale?.timestamp) || "-",
-      description: description || "N/A",
+      description: description || `Sale bill ${sale?.invoiceNo || index + 1}`,
       amount: totalAmount,
       paidAmount: Math.max(0, paidAmount),
       remaining: remainingAmount,
@@ -410,7 +666,9 @@ export default function Customers() {
     };
   });
 
-  const totalOutstandingAmount = customerBills.reduce((sum, bill) => sum + Number(bill.remaining || 0), 0);
+  const totalOutstandingAmount = resolvedViewCustomer
+    ? getCustomerPendingAmount(resolvedViewCustomer, customerSales)
+    : customerBills.reduce((sum, bill) => sum + Number(bill.remaining || 0), 0);
 
   const customerPaymentHistory = customerSales.flatMap((sale) => {
     const billId = sale?.invoiceNo || sale?._id || "-";
@@ -811,7 +1069,12 @@ export default function Customers() {
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                   <div className="flex items-center gap-4">
                     <button
-                      onClick={() => setViewCustomer(null)}
+                      onClick={() => {
+                        setViewCustomer(null);
+                        if (requestedCustomerId) {
+                          router.replace("/AdminDashboard/customers");
+                        }
+                      }}
                       className="p-2.5 bg-gradient-to-r from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 text-gray-800 dark:text-gray-300 hover:from-gray-300 hover:to-gray-400 dark:hover:from-gray-600 dark:hover:to-gray-500 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md"
                     >
                       <ArrowLeft className="w-5 h-5" />
@@ -884,7 +1147,7 @@ export default function Customers() {
 
                     <div className="flex flex-wrap gap-4">
                       <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-emerald-50 dark:from-blue-900/20 dark:to-emerald-900/20 rounded-xl">
-                        <p className="text-xs text-gray-600 dark:text-gray-400">Total Purchases</p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">Total Spent</p>
                         <p className="text-xl font-bold text-gray-900 dark:text-white">
                           {resolvedViewCustomer.purchaseCount || 0}
                         </p>

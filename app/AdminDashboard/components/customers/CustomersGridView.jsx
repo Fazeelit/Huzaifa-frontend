@@ -63,9 +63,9 @@ export default function CustomersGridView({
 
             <div className="grid grid-cols-2 gap-2.5 mb-3">
               <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2.5">
-                <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Total Spent</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Total Pending</p>
                 <p className="text-sm font-bold text-gray-900 dark:text-white">
-                  PKR {(Number(customer.totalSpent) || 0).toLocaleString()}
+                  PKR {(Number(customer.exactPendingAmount) || 0).toLocaleString()}
                 </p>
               </div>
               <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2.5">

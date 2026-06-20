@@ -3,15 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Pencil, Plus, Save, Store, Trash2, Truck } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "../../authservice/api";
 import { usePermissions } from "../../authservice/usePermissions";
 import { blockedButtonClass, blockedButtonProps } from "../../authservice/permissions";
 import { formatDateDDMMYYYY } from "../../utils/formatting";
-import {
-  deleteOutdoorSupply,
-  getOutdoorSuppliers,
-  getOutdoorSupplies,
-} from "../outdoorSupply/storage";
 
 const formatCurrency = (value) =>
   `Rs. ${Number(value || 0).toLocaleString("en-PK", {
@@ -32,6 +28,8 @@ const getSaleTotal = (sale) =>
   Number(sale?.totalAmount ?? sale?.total ?? sale?.grandTotal ?? sale?.subtotal ?? 0) || 0;
 
 export default function OutdoorSupplyPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { crud } = usePermissions();
   const { canCreate, canEdit, canDelete } = crud("PURCHASE");
   const [suppliers, setSuppliers] = useState([]);
@@ -39,13 +37,59 @@ export default function OutdoorSupplyPage() {
   const [sales, setSales] = useState([]);
   const [message, setMessage] = useState({ type: "", text: "" });
   const [deleteTarget, setDeleteTarget] = useState(null);
-
-  const syncData = () => {
-    setSuppliers(getOutdoorSuppliers());
-    setSupplies(getOutdoorSupplies());
-  };
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successModalMessage, setSuccessModalMessage] = useState("");
 
   useEffect(() => {
+    const normalizeSupplier = (supplier) => ({
+      ...supplier,
+      id: supplier?._id || supplier?.id || "",
+    });
+
+    const normalizeSupply = (supply) => ({
+      ...supply,
+      id: supply?.id || supply?._id || "",
+      _id: supply?._id || supply?.id || "",
+      supplierId:
+        supply?.supplierId?._id ||
+        supply?.supplierId?.id ||
+        supply?.supplierId ||
+        "",
+    });
+
+    const fetchOutdoorData = async () => {
+      try {
+        const [supplierResponse, supplyResponse] = await Promise.all([
+          apiRequest("/outdoor-supply-management/suppliers", {
+            method: "GET",
+            suppressErrorToast: true,
+          }),
+          apiRequest("/outdoor-supply-management", {
+            method: "GET",
+            suppressErrorToast: true,
+          }),
+        ]);
+
+        const supplierRows = Array.isArray(supplierResponse?.data)
+          ? supplierResponse.data
+          : Array.isArray(supplierResponse)
+            ? supplierResponse
+            : [];
+        const supplyRows = Array.isArray(supplyResponse?.data)
+          ? supplyResponse.data
+          : Array.isArray(supplyResponse)
+            ? supplyResponse
+            : [];
+
+        setSuppliers(supplierRows.map(normalizeSupplier));
+        setSupplies(supplyRows.map(normalizeSupply));
+      } catch (error) {
+        console.error("Failed to fetch outdoor supply data:", error);
+        setSuppliers([]);
+        setSupplies([]);
+      }
+    };
+
     const fetchSales = async () => {
       try {
         const response = await apiRequest("/sales", {
@@ -59,11 +103,19 @@ export default function OutdoorSupplyPage() {
       }
     };
 
-    syncData();
+    fetchOutdoorData();
     fetchSales();
-    window.addEventListener("storage", syncData);
-    return () => window.removeEventListener("storage", syncData);
   }, []);
+
+  useEffect(() => {
+    const isSuccess = searchParams.get("success") === "1";
+    const successMessage = String(searchParams.get("message") || "").trim();
+
+    if (!isSuccess || !successMessage) return;
+
+    setSuccessModalMessage(successMessage);
+    setShowSuccessModal(true);
+  }, [searchParams]);
 
   const resolvedSupplies = useMemo(() => {
     const salesByKey = new Map();
@@ -114,21 +166,45 @@ export default function OutdoorSupplyPage() {
   );
 
   const handleDeleteRequest = (supply) => {
-    if (!canDelete || !supply?.id) return;
+    if (!canDelete || !(supply?._id || supply?.id)) return;
     setDeleteTarget(supply);
   };
 
   const closeDeleteModal = () => setDeleteTarget(null);
 
+  const handleSuccessModalClose = () => {
+    setShowSuccessModal(false);
+    setSuccessModalMessage("");
+    router.replace("/AdminDashboard/outdoor-supply");
+  };
+
   const handleConfirmDelete = () => {
-    if (!deleteTarget?.id) return;
-    deleteOutdoorSupply(deleteTarget.id);
-    syncData();
-    setMessage({
-      type: "success",
-      text: `Outdoor supply deleted successfully for ${deleteTarget.supplierName || "Outdoor Supply"}.`,
-    });
-    closeDeleteModal();
+    const targetId = deleteTarget?._id || deleteTarget?.id;
+    if (!targetId) return;
+    (async () => {
+      try {
+        await apiRequest(`/outdoor-supply-management/deleteOutdoorSupply/${targetId}`, {
+          method: "DELETE",
+        });
+        setSupplies((prev) =>
+          prev.filter((entry) => String(entry?._id || entry?.id || "") !== String(targetId))
+        );
+        setMessage({
+          type: "success",
+          text: `Outdoor supply deleted successfully for ${deleteTarget.supplierName || "Outdoor Supply"}.`,
+        });
+        closeDeleteModal();
+      } catch (error) {
+        setMessage({
+          type: "error",
+          text:
+            error?.response?.data?.message ||
+            error?.message ||
+            "Failed to delete outdoor supply.",
+        });
+        closeDeleteModal();
+      }
+    })();
   };
 
   return (
@@ -306,7 +382,7 @@ export default function OutdoorSupplyPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {resolvedSupplies.map((supply) => (
-                  <tr key={supply.id} className="align-top">
+                  <tr key={supply._id || supply.id} className="align-top">
                     <td className="px-4 py-3 text-slate-700">
                       {formatDateDDMMYYYY(supply.supplyDate || supply.createdAt)}
                     </td>
@@ -335,7 +411,7 @@ export default function OutdoorSupplyPage() {
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
                         <Link
-                          href={`/AdminDashboard/outdoor-supply/${supply.id}/edit`}
+                          href={`/AdminDashboard/outdoor-supply/${supply._id || supply.id}/edit`}
                           className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
                         >
                           <Pencil className="h-4 w-4" />
@@ -381,6 +457,25 @@ export default function OutdoorSupplyPage() {
                 className="inline-flex items-center justify-center rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700"
               >
                 Yes
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showSuccessModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-md rounded-3xl border border-emerald-100 bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-slate-900">Success</h3>
+            <p className="mt-2 text-sm text-slate-600">{successModalMessage}</p>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={handleSuccessModalClose}
+                className="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+              >
+                OK
               </button>
             </div>
           </div>

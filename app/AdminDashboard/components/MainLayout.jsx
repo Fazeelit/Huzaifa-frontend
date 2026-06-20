@@ -290,6 +290,18 @@ export default function MainLayout({ children }) {
     return () => window.removeEventListener("online", handleOnline);
   }, []);
 
+  useEffect(() => {
+    if (loading || !role || typeof window === "undefined") {
+      return;
+    }
+
+    if (!window.navigator.onLine || pendingSyncCount <= 0 || syncingRef.current) {
+      return;
+    }
+
+    performSync({ silentWhenEmpty: true, autoTriggered: true });
+  }, [loading, pendingSyncCount, role]);
+
   const handleSyncClick = async () => {
     await performSync();
   };
