@@ -27,8 +27,6 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "fs-extra": "^11.3.2",
-    "googleapis": "^168.0.0",
-    "gridfs-stream": "^1.1.1",
     "jsonwebtoken": "^9.0.2",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.2",

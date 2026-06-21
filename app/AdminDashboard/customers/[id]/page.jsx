@@ -29,6 +29,7 @@ const parseAmount = (value) => {
 };
 
 const formatRs = (value) => `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
+const formatRoundedRs = (value) => `Rs. ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
 const CRUD_CACHE_KEY = "appCrudResponseCache";
 const REMAINING_BILL_MARKER = "__remaining_bill__";
 const REMAINING_BILL_PAYMENT_NOTE = "__remaining_bill_payment__";
@@ -170,13 +171,19 @@ const strippurchaseMetaFields = (purchase) => {
 };
 
 const extractpurchasesArray = (response) =>
-  Array.isArray(response?.data)
-    ? response.data
-    : Array.isArray(response?.purchases)
-      ? response.purchases
-      : Array.isArray(response)
-        ? response
-        : [];
+  Array.isArray(response?.sales)
+    ? response.sales
+    : Array.isArray(response?.data?.sales)
+      ? response.data.sales
+      : Array.isArray(response?.data?.data)
+        ? response.data.data
+        : Array.isArray(response?.data)
+          ? response.data
+          : Array.isArray(response?.purchases)
+            ? response.purchases
+            : Array.isArray(response)
+              ? response
+              : [];
 
 const extractcustomersArray = (response) =>
   Array.isArray(response?.data)
@@ -199,6 +206,8 @@ const buildcustomerLookupKeys = (customerLike = {}) => {
   const customerObject =
     customerLike?.customer && typeof customerLike.customer === "object"
       ? customerLike.customer
+      : customerLike?.selectedCustomer && typeof customerLike.selectedCustomer === "object"
+        ? customerLike.selectedCustomer
       : {};
 
   const keys = [
@@ -223,7 +232,25 @@ const buildcustomerLookupKeys = (customerLike = {}) => {
 const getpurchaseQuantity = (item = {}) => Number(item?.quantity ?? item?.qty ?? 0) || 0;
 
 const getpurchaseUnitPrice = (item = {}) =>
-  parseAmount(item?.purchasePrice ?? item?.price ?? item?.unitPrice ?? item?.salePrice);
+  parseAmount(item?.salePrice ?? item?.price ?? item?.unitPrice ?? item?.purchasePrice ?? item?.retailSalePrice);
+
+const getReturnedpurchaseQuantity = (item = {}) =>
+  Math.max(
+    Number(
+      item?.returnedQuantity ??
+        item?.returnedQty ??
+        item?.returnQty ??
+        item?.quantityReturned ??
+        0
+    ) || 0,
+    0
+  );
+
+const getChargedpurchaseQuantity = (item = {}) =>
+  Math.max(
+    Number(item?.chargedQuantity ?? item?.quantity ?? item?.qty ?? 0) - getReturnedpurchaseQuantity(item),
+    0
+  );
 
 const getNormalizedpurchaseAmounts = (purchase = {}) => {
   const items = Array.isArray(purchase?.items)
@@ -232,16 +259,20 @@ const getNormalizedpurchaseAmounts = (purchase = {}) => {
       ? purchase.products
       : [];
   const derivedSubtotal = items.reduce(
-    (sum, item) => sum + getpurchaseQuantity(item) * getpurchaseUnitPrice(item),
+    (sum, item) => sum + getChargedpurchaseQuantity(item) * getpurchaseUnitPrice(item),
     0,
   );
-  const derivedTotal = derivedSubtotal + parseAmount(purchase?.taxAmount);
+  const derivedTotal = Math.max(
+    Number((derivedSubtotal - parseAmount(purchase?.discount) + parseAmount(purchase?.taxAmount)).toFixed(2)),
+    0
+  );
   const rawTotal = parseAmount(purchase?.totalAmount ?? purchase?.totalPrice ?? purchase?.total);
-  const rawPaid = parseAmount(purchase?.paidAmount);
+  const rawPaid = parseAmount(purchase?.paidAmount ?? purchase?.cashReceived);
   const rawBalance = parseAmount(purchase?.balance);
-  const totalAmount = rawTotal > 0 ? rawTotal : derivedTotal;
+  const totalAmount = rawTotal > 0 ? Math.max(rawTotal, derivedTotal) : derivedTotal;
   const paidAmount = rawPaid;
-  const balanceAmount = rawBalance > 0 ? rawBalance : Math.max(totalAmount - paidAmount, 0);
+  const computedBalanceAmount = Math.max(totalAmount - paidAmount, 0);
+  const balanceAmount = rawBalance > 0 ? Math.max(rawBalance, computedBalanceAmount) : computedBalanceAmount;
 
   return {
     totalAmount,
@@ -580,13 +611,19 @@ const mergeLatestpurchases = (networkpurchases) => {
 };
 
 const matchescustomerpurchase = (purchase, customer) => {
-  const purchasecustomer = purchase?.customer || purchase?.selectedcustomer || {};
+  const purchasecustomer = purchase?.customer || purchase?.selectedCustomer || purchase?.selectedcustomer || {};
   const purchasecustomerId = purchase?.customerId || purchasecustomer?._id || purchasecustomer?.id || "";
   const targetId = customer?.id || customer?._id || "";
-  const purchaseCnic = String(purchase?.customerCnic || purchasecustomer?.cnic || "").trim();
+  const purchaseCnic = String(purchase?.cnic || purchase?.customerCnic || purchasecustomer?.cnic || "").trim();
   const targetCnic = String(customer?.cnic || "").trim();
   const purchasePhone = String(
-    purchase?.customerPhone || purchase?.customerMobile || purchasecustomer?.phone || purchasecustomer?.mobile || ""
+    purchase?.phone ||
+      purchase?.mobile ||
+      purchase?.customerPhone ||
+      purchase?.customerMobile ||
+      purchasecustomer?.phone ||
+      purchasecustomer?.mobile ||
+      ""
   )
     .replace(/\D/g, "")
     .trim();
@@ -594,7 +631,9 @@ const matchescustomerpurchase = (purchase, customer) => {
     .replace(/\D/g, "")
     .trim();
   const purchaseLookupKeys = buildcustomerLookupKeys({
+    ...purchase,
     customer: purchasecustomer,
+    selectedCustomer: purchasecustomer,
     name: purchase?.customerName,
     company: purchase?.companyName || purchase?.company || purchasecustomer?.companyName || purchasecustomer?.company,
     contactPerson: purchase?.contactPerson || purchasecustomer?.contactPerson,
@@ -2139,9 +2178,9 @@ export default function customerDetailPage() {
             <td>${entry.reference || "N/A"}</td>
             <td>${entry.particulars || "N/A"}</td>
             <td>${entry.status || "N/A"}</td>
-            <td>${formatRs(entry.debit)}</td>
+            <td>${formatRoundedRs(entry.debit)}</td>
             <td>${formatRs(entry.credit)}</td>
-            <td>${formatRs(entry.balance)}</td>
+            <td>${formatRoundedRs(entry.balance)}</td>
           </tr>`
       )
       .join("");
@@ -2250,11 +2289,11 @@ export default function customerDetailPage() {
             </div>
               <div className="rounded-2xl bg-emerald-50 px-4 py-3 dark:bg-emerald-900/20">
               <p className="text-xs text-emerald-700 dark:text-emerald-300">Total Spent</p>
-              <p className="text-lg font-bold text-emerald-900 dark:text-white">{formatRs(totalBillAmount)}</p>
+              <p className="text-lg font-bold text-emerald-900 dark:text-white">{formatRoundedRs(totalBillAmount)}</p>
             </div>
             <div className="rounded-2xl bg-amber-50 px-4 py-3 dark:bg-amber-900/20">
               <p className="text-xs text-amber-700 dark:text-amber-300">Total Pending</p>
-              <p className="text-lg font-bold text-amber-900 dark:text-white">{formatRs(latestTransactionBalance)}</p>
+              <p className="text-lg font-bold text-amber-900 dark:text-white">{formatRoundedRs(latestTransactionBalance)}</p>
             </div>
             <div className="rounded-2xl bg-violet-50 px-4 py-3 dark:bg-violet-900/20">
               <p className="text-xs text-violet-700 dark:text-violet-300">Payments</p>
@@ -2373,9 +2412,9 @@ export default function customerDetailPage() {
                                 {entry.status || "N/A"}
                               </span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{formatRs(entry.debit)}</td>
+                            <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{formatRoundedRs(entry.debit)}</td>
                             <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">{formatRs(entry.credit)}</td>
-                            <td className="px-2.5 py-2.5 text-sm font-medium text-gray-900 dark:text-white">{formatRs(entry.balance)}</td>
+                            <td className="px-2.5 py-2.5 text-sm font-medium text-gray-900 dark:text-white">{formatRoundedRs(entry.balance)}</td>
                             <td className="px-2.5 py-2.5 text-sm text-gray-700 dark:text-gray-300">
                               {entry.isBlankBillRow ? (
                                 <button

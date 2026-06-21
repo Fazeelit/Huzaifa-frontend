@@ -91,7 +91,19 @@ export default function CustomersListView({
 
                 <td className="px-4 py-2">
                   <p className="text-xs font-bold text-green-600 dark:text-green-400">
-                    {formatAmount(customer.exactPendingAmount || 0)}
+                    {formatAmount(
+                      Math.round(
+                        Number(
+                          customer.latestTransactionBalance ??
+                            customer.exactPendingAmount ??
+                            customer.totalDue ??
+                            customer.pendingAmount ??
+                            customer.balance ??
+                            customer.accountBalance ??
+                            0
+                        ) || 0
+                      )
+                    )}
                   </p>
                 </td>
 

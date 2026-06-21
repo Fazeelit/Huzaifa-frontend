@@ -13,7 +13,20 @@ export default function CustomersGridView({
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-      {paginatedCustomers.map((customer) => (
+      {paginatedCustomers.map((customer) => {
+        const exactPendingAmount = Math.round(
+          Number(
+            customer.latestTransactionBalance ??
+            customer.exactPendingAmount ??
+            customer.totalDue ??
+            customer.pendingAmount ??
+            customer.balance ??
+            customer.accountBalance ??
+            0
+          ) || 0
+        );
+
+        return (
         <div
           key={customer.id}
           className="group bg-white/80 dark:bg-gray-800/80 backdrop-blur rounded-xl border border-white/70 dark:border-gray-700/70 overflow-hidden hover:border-blue-400 hover:shadow-xl shadow-lg shadow-black/5 transition-all duration-300"
@@ -65,7 +78,7 @@ export default function CustomersGridView({
               <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2.5">
                 <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Total Pending</p>
                 <p className="text-sm font-bold text-gray-900 dark:text-white">
-                  PKR {(Number(customer.exactPendingAmount) || 0).toLocaleString()}
+                  PKR {exactPendingAmount.toLocaleString()}
                 </p>
               </div>
               <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2.5">
@@ -121,8 +134,7 @@ export default function CustomersGridView({
             </div>
           </div>
         </div>
-      ))}
+      )})}
     </div>
   );
 }
-

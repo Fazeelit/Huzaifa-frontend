@@ -75,20 +75,10 @@ const parseAmount = (value) => {
   return match ? Number(match[0]) : 0;
 };
 
-const REMAINING_BILL_MARKER = "__remaining_bill__";
 
-const getCustomerBillsPendingAmount = (customer = {}) =>
-  (Array.isArray(customer?.bills) ? customer.bills : []).reduce(
-    (sum, bill) =>
-      sum +
-      Math.max(
-        parseAmount(bill?.remainingAmount) ||
-          parseAmount(bill?.balance) ||
-          (parseAmount(bill?.amount) - parseAmount(bill?.paidAmount)),
-        0
-      ),
-    0
-  );
+const REMAINING_BILL_MARKER = "__remaining_bill__";
+const REMAINING_BILL_PAYMENT_NOTE = "__remaining_bill_payment__";
+const CUSTOMER_TOTAL_PAYMENT_BATCH_PREFIX = "__customer_total_payment__:";
 
 const getRemainingBillDebit = (payments = []) =>
   (Array.isArray(payments) ? payments : []).reduce((sum, payment) => {
@@ -99,12 +89,98 @@ const getRemainingBillDebit = (payments = []) =>
     return sum + parseAmount(payment?.paidAmount ?? payment?.amount);
   }, 0);
 
-const getCustomerSalePendingAmount = (sale = {}) => {
-  const totalAmount = parseAmount(
-    sale?.totalAmount ?? sale?.totalPrice ?? sale?.total ?? getCustomerSaleTotal(sale)
+const normalizeCustomerPayment = (payment = {}) => {
+  const amountNumber = Number(payment?.paidAmount ?? payment?.amount ?? 0);
+  const paymentDate = payment?.appliedAt || payment?.date || "";
+
+  return {
+    ...payment,
+    id: String(payment?._id || payment?.id || payment?.paymentId || "").trim(),
+    paymentId: String(payment?._id || payment?.id || payment?.paymentId || "").trim(),
+    customerId: String(payment?.customerId || "").trim(),
+    saleId: String(payment?.saleId || "").trim(),
+    amount: amountNumber,
+    amountNumber,
+    date: paymentDate,
+    appliedAt: paymentDate,
+    method: payment?.paymentMethod || payment?.method || "Cash",
+    paymentMethod: payment?.paymentMethod || payment?.method || "Cash",
+    reference: payment?.reference || "",
+    billId: payment?.billId || "",
+    notes: payment?.notes || "",
+    transactionTimestamp: payment?.updatedAt || paymentDate || payment?.createdAt || "",
+    source: "payment",
+  };
+};
+
+const isCustomerTotalPaymentBatchNote = (value = "") =>
+  String(value || "").trim().startsWith(CUSTOMER_TOTAL_PAYMENT_BATCH_PREFIX);
+
+const getNormalizedDateValue = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+};
+
+const getTransactionSortValue = (timestamp, fallbackDate = "") => {
+  const first = new Date(timestamp || fallbackDate);
+  if (!Number.isNaN(first.getTime())) return first.getTime();
+  return 0;
+};
+
+const formatStatusLabel = (value, fallback = "Pending") => {
+  const normalized = String(value || fallback).trim();
+  if (!normalized) return fallback;
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
+};
+
+const getEntryMatchKeys = (...values) =>
+  values
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+
+const getCustomerSalePaymentStatus = (paidAmount, totalAmount) => {
+  const paid = Number(paidAmount || 0);
+  const total = Number(totalAmount || 0);
+  if (paid <= 0) return "Pending";
+  if (total > 0 && paid >= total) return "Paid";
+  return "Partial";
+};
+
+const getNormalizedCustomerSaleAmounts = (sale = {}) => {
+  const items = Array.isArray(sale?.items)
+    ? sale.items
+    : Array.isArray(sale?.products)
+      ? sale.products
+      : [];
+  const derivedSubtotal = items.reduce(
+    (sum, item) =>
+      sum +
+      getInvoiceAmount(
+        getChargedSaleQuantity(item),
+        Number(item?.salePrice ?? item?.price ?? item?.unitPrice ?? item?.retailSalePrice ?? 0)
+      ),
+    0
   );
-  const paidAmount = parseAmount(sale?.paidAmount ?? sale?.cashReceived);
-  return Math.max(totalAmount - paidAmount, 0);
+  const derivedTotal = Math.max(
+    Number((derivedSubtotal - parseAmount(sale?.discount) + parseAmount(sale?.taxAmount)).toFixed(2)),
+    0
+  );
+  const rawTotal = parseAmount(sale?.totalAmount ?? sale?.totalPrice ?? sale?.total);
+  const rawPaid = parseAmount(sale?.paidAmount ?? sale?.cashReceived);
+  const rawBalance = parseAmount(sale?.balance);
+  const totalAmount = rawTotal > 0 ? Math.max(rawTotal, derivedTotal) : derivedTotal;
+  const paidAmount = rawPaid;
+  const computedBalanceAmount = Math.max(totalAmount - paidAmount, 0);
+  const balanceAmount = rawBalance > 0 ? Math.max(rawBalance, computedBalanceAmount) : computedBalanceAmount;
+
+  return {
+    totalAmount,
+    paidAmount,
+    balanceAmount,
+  };
 };
 
 const formatDate = (value) => {
@@ -151,39 +227,231 @@ const normalizeCustomer = (customer) => ({
   status: String(customer.status || "active").toLowerCase(),
   satisfaction: Number(customer.satisfaction) || 0,
   bills: Array.isArray(customer.bills) ? customer.bills : [],
-  exactPendingAmount: toNumber(
-    customer.exactPendingAmount ??
+  customerPayments: Array.isArray(customer.customerPayments)
+    ? customer.customerPayments.map(normalizeCustomerPayment)
+    : [],
+  latestTransactionBalance: toNumber(
+    customer.latestTransactionBalance ??
+      customer.exactPendingAmount ??
       customer.totalDue ??
-      customer.accountBalance ??
       customer.pendingAmount ??
-      customer.balance
+      customer.balance ??
+      customer.accountBalance
+  ),
+  exactPendingAmount: toNumber(
+    customer.latestTransactionBalance ??
+      customer.exactPendingAmount ??
+      customer.totalDue ??
+      customer.pendingAmount ??
+      customer.balance ??
+      customer.accountBalance
   ),
 });
 
-const getCustomerPendingAmount = (customer = {}, matchedSales = []) => {
-  const savedPendingAmountCandidates = [
-    customer?.totalDue,
-    customer?.pendingAmount,
-    customer?.balance,
-    customer?.accountBalance,
-  ]
-    .map((value) => toNumber(value))
-    .filter((value) => Number.isFinite(value) && value > 0);
-  const savedPendingAmount = savedPendingAmountCandidates.length > 0 ? Math.max(...savedPendingAmountCandidates) : 0;
-  const remainingBillDebit = toNumber(customer?.remainingBillDebit);
+const getCustomerLatestTransactionBalance = (customer = {}, matchedSales = []) => {
+  const sourceBills = Array.isArray(customer?.bills) ? customer.bills : [];
+  const sourceBillsByKey = new Map();
 
-  const salesPendingAmount = matchedSales.reduce(
-    (sum, sale) => sum + getCustomerSalePendingAmount(sale),
-    0
-  );
-  const latestTransactionBalance = Math.max(salesPendingAmount + remainingBillDebit, 0);
+  sourceBills.forEach((bill) => {
+    getEntryMatchKeys(bill?.id, bill?.reference, bill?.billId).forEach((key) => {
+      sourceBillsByKey.set(key, bill);
+    });
+  });
 
-  if (latestTransactionBalance > 0) {
-    return latestTransactionBalance;
-  }
+  const displayBills = matchedSales.map((sale, index) => {
+    const { totalAmount, paidAmount, balanceAmount } = getNormalizedCustomerSaleAmounts(sale);
+    const matchedStoredBill = getEntryMatchKeys(sale?._id, sale?.invoiceNo, sale?.invoiceNumber)
+      .map((key) => sourceBillsByKey.get(key))
+      .find(Boolean);
+    const items = Array.isArray(sale?.items)
+      ? sale.items
+      : Array.isArray(sale?.products)
+        ? sale.products
+        : [];
+    const hasStoredPaidAmount =
+      matchedStoredBill &&
+      Object.prototype.hasOwnProperty.call(matchedStoredBill, "paidAmount") &&
+      String(matchedStoredBill?.paidAmount ?? "").trim() !== "";
+    const storedPaidAmount = parseAmount(matchedStoredBill?.paidAmount);
+    const effectivePaidAmount = hasStoredPaidAmount ? storedPaidAmount : Number(paidAmount || 0);
+    const remaining = hasStoredPaidAmount
+      ? Math.max(totalAmount - effectivePaidAmount, 0)
+      : Math.max(balanceAmount || totalAmount - effectivePaidAmount, 0);
+    const description = items
+      .map((item) => item?.productName || item?.name)
+      .filter(Boolean)
+      .join(", ");
+    const reference = String(sale?.invoiceNo || sale?.invoiceNumber || sale?._id || "");
+    const saleStatus = formatStatusLabel(
+      sale?.paymentStatus ||
+        sale?.purchaseStatus ||
+        matchedStoredBill?.status ||
+        getCustomerSalePaymentStatus(effectivePaidAmount, totalAmount),
+      "Pending"
+    ).toLowerCase();
 
-  const billsPendingAmount = getCustomerBillsPendingAmount(customer);
-  return Math.max(savedPendingAmount, billsPendingAmount, remainingBillDebit, 0);
+    return {
+      id: reference || `sale-${index + 1}`,
+      date: sale?.saleDate || sale?.createdAt || "",
+      description: description || "N/A",
+      amountNumber: totalAmount,
+      paidAmountNumber: effectivePaidAmount,
+      remainingAmountNumber: remaining,
+      status: saleStatus,
+      reference,
+      transactionTimestamp:
+        sale?.updatedAt ||
+        matchedStoredBill?.updatedAt ||
+        sale?.createdAt ||
+        sale?.saleDate ||
+        "",
+      source: "bill",
+    };
+  });
+
+  const paymentHistoryByKey = new Map();
+  (Array.isArray(customer?.customerPayments) ? customer.customerPayments : []).forEach((payment, index) => {
+    const normalizedPayment = normalizeCustomerPayment(payment);
+    const key = String(normalizedPayment?.paymentId || normalizedPayment?.id || `PAY-${index + 1}`).trim();
+    paymentHistoryByKey.set(key, normalizedPayment);
+  });
+
+  const paymentHistoryToShow = Array.from(paymentHistoryByKey.values()).sort((a, b) => {
+    const dateDiff = (getNormalizedDateValue(b.date) ?? 0) - (getNormalizedDateValue(a.date) ?? 0);
+    if (dateDiff !== 0) return dateDiff;
+    return (
+      getTransactionSortValue(b.transactionTimestamp, b.date) -
+      getTransactionSortValue(a.transactionTimestamp, a.date)
+    );
+  });
+
+  const paymentTransactionsToShow = paymentHistoryToShow.reduce((entries, payment) => {
+    const isCustomerTotalPaymentBatch = isCustomerTotalPaymentBatchNote(payment?.notes);
+    const isOldBillPayment =
+      String(payment?.notes || "").trim() === REMAINING_BILL_PAYMENT_NOTE;
+
+    if (isCustomerTotalPaymentBatch) {
+      const batchKey = String(payment?.notes || "").trim();
+      const matchingEntry = entries.find(
+        (entry) => String(entry?.notes || "").trim() === batchKey
+      );
+
+      if (matchingEntry) {
+        matchingEntry.amountNumber =
+          Number(matchingEntry.amountNumber || 0) + Number(payment?.amountNumber || 0);
+        matchingEntry.paymentIds = [
+          ...new Set(
+            [
+              ...(Array.isArray(matchingEntry.paymentIds) ? matchingEntry.paymentIds : []),
+              String(payment?.paymentId || payment?.id || "").trim(),
+            ].filter(Boolean)
+          ),
+        ];
+        matchingEntry.isGroupedPayment = matchingEntry.paymentIds.length > 1;
+        return entries;
+      }
+
+      entries.push({
+        ...payment,
+        paymentIds: [String(payment?.paymentId || payment?.id || "").trim()].filter(Boolean),
+        isGroupedPayment: false,
+      });
+      return entries;
+    }
+
+    if (!isOldBillPayment) {
+      entries.push({ ...payment });
+      return entries;
+    }
+
+    const matchingEntry = entries.find(
+      (entry) =>
+        String(entry?.notes || "").trim() !== REMAINING_BILL_PAYMENT_NOTE &&
+        String(entry?.reference || "").trim() === String(payment?.reference || "").trim() &&
+        String(entry?.method || "").trim() === String(payment?.method || "").trim() &&
+        getNormalizedDateValue(entry?.date) === getNormalizedDateValue(payment?.date)
+    );
+
+    if (matchingEntry) {
+      matchingEntry.amountNumber =
+        Number(matchingEntry.amountNumber || 0) + Number(payment?.amountNumber || 0);
+      return entries;
+    }
+
+    entries.push({ ...payment });
+    return entries;
+  }, []);
+
+  const transactionFeed = [
+    ...displayBills.map((bill, index) => ({
+      id: `bill-${bill.id}-${index}`,
+      type: "bill",
+      date: bill.date,
+      transactionTimestamp: bill.transactionTimestamp,
+      reference: bill.reference,
+      particulars: bill.description,
+      debit: bill.amountNumber,
+      credit: 0,
+      savedOrder: index,
+      status: formatStatusLabel(bill.status, "Pending"),
+    })),
+    ...paymentTransactionsToShow.map((payment, index) => ({
+      id: `payment-${payment.id}-${index}`,
+      type: "payment",
+      date: payment.date,
+      transactionTimestamp: payment.transactionTimestamp,
+      reference: payment.reference || payment.billId || payment.id,
+      particulars:
+        isCustomerTotalPaymentBatchNote(payment?.notes)
+          ? "N/A"
+          : String(payment?.notes || "").trim() === REMAINING_BILL_PAYMENT_NOTE
+            ? "old bill payment"
+            : payment.notes || "N/A",
+      debit: 0,
+      credit: Number(payment.amountNumber || 0),
+      savedOrder: displayBills.length + index,
+      status: "Received",
+      method: payment.method,
+      notes: payment.notes || "",
+    })),
+  ];
+
+  let runningBalance = 0;
+  const chronologicalTransactions = [...transactionFeed].sort((a, b) => {
+    const dateDiff = (getNormalizedDateValue(a.date) ?? 0) - (getNormalizedDateValue(b.date) ?? 0);
+    if (dateDiff !== 0) return dateDiff;
+    const timestampDiff =
+      getTransactionSortValue(a.transactionTimestamp, a.date) -
+      getTransactionSortValue(b.transactionTimestamp, b.date);
+    if (timestampDiff !== 0) return timestampDiff;
+    return a.savedOrder - b.savedOrder;
+  });
+
+  const transactionsWithBalance = chronologicalTransactions
+    .map((entry) => {
+      runningBalance = Math.max(0, runningBalance + entry.debit - entry.credit);
+      return {
+        ...entry,
+        balance: runningBalance,
+      };
+    })
+    .sort((a, b) => {
+      const dateDiff = (getNormalizedDateValue(b.date) ?? 0) - (getNormalizedDateValue(a.date) ?? 0);
+      if (dateDiff !== 0) return dateDiff;
+      const timestampDiff =
+        getTransactionSortValue(b.transactionTimestamp, b.date) -
+        getTransactionSortValue(a.transactionTimestamp, a.date);
+      if (timestampDiff !== 0) return timestampDiff;
+      return b.savedOrder - a.savedOrder;
+    });
+
+  const blankBillDebit = getRemainingBillDebit(customer?.customerPayments);
+  const adjustedTransactions = transactionsWithBalance.map((entry) => ({
+    ...entry,
+    balance: Math.max(0, Number(entry.balance || 0) + Number(blankBillDebit || 0)),
+  }));
+
+  return Number(adjustedTransactions?.[0]?.balance || 0);
 };
 
 const extractSalesArray = (response) => {
@@ -407,27 +675,10 @@ export default function Customers() {
                     ...customer,
                     ...detailResponse.customer,
                   };
-                  const remainingBillDebit = getRemainingBillDebit(customerPayments);
-                  const ledgerPendingAmount =
-                    getCustomerBillsPendingAmount(mergedCustomer) + remainingBillDebit;
-                  const syncedPendingAmount = Math.max(
-                    ledgerPendingAmount,
-                    toNumber(mergedCustomer?.totalDue),
-                    toNumber(mergedCustomer?.accountBalance),
-                    toNumber(mergedCustomer?.pendingAmount),
-                    toNumber(mergedCustomer?.balance),
-                    remainingBillDebit,
-                    0
-                  );
 
                   return normalizeCustomer({
                     ...mergedCustomer,
-                    remainingBillDebit,
-                    totalDue: syncedPendingAmount,
-                    accountBalance: syncedPendingAmount,
-                    pendingAmount: syncedPendingAmount,
-                    balance: syncedPendingAmount,
-                    exactPendingAmount: syncedPendingAmount,
+                    customerPayments,
                   });
                 }
               } catch {
@@ -492,23 +743,7 @@ export default function Customers() {
       (sum, sale) => sum + getCustomerSaleTotal(sale),
       0
     );
-    const resolvedPendingAmount = (() => {
-      const refreshedPendingCandidates = [
-        customer?.totalDue,
-        customer?.accountBalance,
-        customer?.pendingAmount,
-        customer?.balance,
-        customer?.remainingBillDebit,
-      ]
-        .map((value) => toNumber(value))
-        .filter((value) => Number.isFinite(value) && value > 0);
-
-      if (refreshedPendingCandidates.length > 0) {
-        return Math.max(...refreshedPendingCandidates);
-      }
-
-      return getCustomerPendingAmount(customer, matchedSales);
-    })();
+    const latestTransactionBalance = getCustomerLatestTransactionBalance(customer, matchedSales);
     const latestSale = matchedSales
       .slice()
       .sort((a, b) => new Date(getSaleDateValue(b) || 0).getTime() - new Date(getSaleDateValue(a) || 0).getTime())[0];
@@ -517,9 +752,12 @@ export default function Customers() {
         ...customer,
         purchaseCount: matchedSales.length,
         totalSpent,
-        accountBalance: resolvedPendingAmount,
-        totalDue: resolvedPendingAmount,
-        exactPendingAmount: resolvedPendingAmount,
+        latestTransactionBalance,
+        accountBalance: latestTransactionBalance,
+        totalDue: latestTransactionBalance,
+        pendingAmount: latestTransactionBalance,
+        balance: latestTransactionBalance,
+        exactPendingAmount: latestTransactionBalance,
         lastPurchase: latestSale ? (getSaleDateValue(latestSale) || customer.lastPurchase) : "No purchases yet",
       };
   });
@@ -667,7 +905,7 @@ export default function Customers() {
   });
 
   const totalOutstandingAmount = resolvedViewCustomer
-    ? getCustomerPendingAmount(resolvedViewCustomer, customerSales)
+    ? Number(resolvedViewCustomer.latestTransactionBalance || 0)
     : customerBills.reduce((sum, bill) => sum + Number(bill.remaining || 0), 0);
 
   const customerPaymentHistory = customerSales.flatMap((sale) => {
@@ -901,9 +1139,59 @@ export default function Customers() {
           customer.id === viewCustomer?.id
             ? {
                 ...customer,
+                latestTransactionBalance: Math.max(
+                  0,
+                  Number(
+                    customer.latestTransactionBalance ??
+                      customer.exactPendingAmount ??
+                      customer.accountBalance ??
+                      0
+                  ) - paidAmount
+                ),
                 accountBalance: Math.max(
                   0,
-                  Number(customer.accountBalance || 0) - paidAmount
+                  Number(
+                    customer.latestTransactionBalance ??
+                      customer.exactPendingAmount ??
+                      customer.accountBalance ??
+                      0
+                  ) - paidAmount
+                ),
+                totalDue: Math.max(
+                  0,
+                  Number(
+                    customer.latestTransactionBalance ??
+                      customer.exactPendingAmount ??
+                      customer.totalDue ??
+                      0
+                  ) - paidAmount
+                ),
+                pendingAmount: Math.max(
+                  0,
+                  Number(
+                    customer.latestTransactionBalance ??
+                      customer.exactPendingAmount ??
+                      customer.pendingAmount ??
+                      0
+                  ) - paidAmount
+                ),
+                balance: Math.max(
+                  0,
+                  Number(
+                    customer.latestTransactionBalance ??
+                      customer.exactPendingAmount ??
+                      customer.balance ??
+                      0
+                  ) - paidAmount
+                ),
+                exactPendingAmount: Math.max(
+                  0,
+                  Number(
+                    customer.latestTransactionBalance ??
+                      customer.exactPendingAmount ??
+                      customer.accountBalance ??
+                      0
+                  ) - paidAmount
                 ),
               }
             : customer
@@ -913,9 +1201,59 @@ export default function Customers() {
         prev
           ? {
               ...prev,
+              latestTransactionBalance: Math.max(
+                0,
+                Number(
+                  prev.latestTransactionBalance ??
+                    prev.exactPendingAmount ??
+                    prev.accountBalance ??
+                    0
+                ) - paidAmount
+              ),
               accountBalance: Math.max(
                 0,
-                Number(prev.accountBalance || 0) - paidAmount
+                Number(
+                  prev.latestTransactionBalance ??
+                    prev.exactPendingAmount ??
+                    prev.accountBalance ??
+                    0
+                ) - paidAmount
+              ),
+              totalDue: Math.max(
+                0,
+                Number(
+                  prev.latestTransactionBalance ??
+                    prev.exactPendingAmount ??
+                    prev.totalDue ??
+                    0
+                ) - paidAmount
+              ),
+              pendingAmount: Math.max(
+                0,
+                Number(
+                  prev.latestTransactionBalance ??
+                    prev.exactPendingAmount ??
+                    prev.pendingAmount ??
+                    0
+                ) - paidAmount
+              ),
+              balance: Math.max(
+                0,
+                Number(
+                  prev.latestTransactionBalance ??
+                    prev.exactPendingAmount ??
+                    prev.balance ??
+                    0
+                ) - paidAmount
+              ),
+              exactPendingAmount: Math.max(
+                0,
+                Number(
+                  prev.latestTransactionBalance ??
+                    prev.exactPendingAmount ??
+                    prev.accountBalance ??
+                    0
+                ) - paidAmount
               ),
             }
           : prev
@@ -1202,7 +1540,12 @@ export default function Customers() {
                       <div>
                         <p className="text-sm text-gray-600 dark:text-gray-400">Pending Amount</p>
                         <p className="text-lg font-bold text-amber-600 dark:text-amber-400">
-                          PKR {(Number(resolvedViewCustomer.accountBalance) || 0).toLocaleString()}
+                          PKR {(Number(
+                            resolvedViewCustomer.latestTransactionBalance ??
+                              resolvedViewCustomer.exactPendingAmount ??
+                              resolvedViewCustomer.accountBalance ??
+                              0
+                          ) || 0).toLocaleString()}
                         </p>
                       </div>
                       <div className="p-3 bg-gradient-to-r from-amber-100 to-yellow-100 dark:from-amber-900/30 dark:to-yellow-900/30 rounded-xl">
