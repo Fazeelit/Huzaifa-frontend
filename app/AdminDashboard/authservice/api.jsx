@@ -3,11 +3,23 @@
 import axios from "axios";
 import { toast } from "react-hot-toast";
 
+function normalizeApiBaseUrl(baseUrl) {
+  const trimmedBaseUrl = baseUrl?.replace(/\/+$/, "");
+
+  if (!trimmedBaseUrl) {
+    return "";
+  }
+
+  return /\/api$/i.test(trimmedBaseUrl)
+    ? trimmedBaseUrl
+    : `${trimmedBaseUrl}/api`;
+}
+
 function getBaseUrl() {
   const envBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
   if (typeof window === "undefined") {
-    return (envBaseUrl || "http://localhost:8080/api").replace(/\/+$/, "");
+    return normalizeApiBaseUrl(envBaseUrl || "https://huzaifa-backend.onrender.com/api");
   }
 
   const desktopPort = window.desktop?.backendPort;
@@ -18,7 +30,7 @@ function getBaseUrl() {
   }
 
   if (envBaseUrl) {
-    return envBaseUrl.replace(/\/+$/, "");
+    return normalizeApiBaseUrl(envBaseUrl);
   }
 
   return "/api";
@@ -55,7 +67,6 @@ export async function apiRequest(
       delete finalHeaders["Content-Type"];
     } else if (data && typeof data === "object") {
       finalHeaders["Content-Type"] = "application/json";
-      data = JSON.stringify(data);
     }
 
     // ----------------------------
@@ -80,11 +91,12 @@ export async function apiRequest(
         method,
         headers: finalHeaders,
         params,
+        hasBody: !["GET", "HEAD"].includes(method.toUpperCase()),
       });
     }
 
     // ----------------------------
-    // Axios Config (🔥 IMPORTANT FIX)
+    // Axios Config
     // ----------------------------
     const config = {
       url,
@@ -92,7 +104,7 @@ export async function apiRequest(
       headers: finalHeaders,
       timeout,
       params,
-      withCredentials: true, // 🔥 REQUIRED FOR COOKIES
+      withCredentials: true,
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
       onUploadProgress:
@@ -127,6 +139,12 @@ export async function apiRequest(
   } catch (error) {
     if (![401, 403, 409].includes(error?.response?.status)) {
       console.error("API Request Error:", error);
+    } else if (process.env.NODE_ENV === "development") {
+      console.warn("API Request Rejected:", {
+        status: error?.response?.status,
+        url: error?.config?.url,
+        message: error?.response?.data?.message || error?.message,
+      });
     }
 
     const errorMessage =
@@ -136,7 +154,7 @@ export async function apiRequest(
         ? "Request timed out. Please try again."
         : null) ||
       (error.message?.includes("Network Error")
-        ? "Network error — check backend connection."
+        ? "Network error - check backend connection."
         : null) ||
       error.message ||
       "Something went wrong";
@@ -147,8 +165,8 @@ export async function apiRequest(
 
     const customError = new Error(errorMessage);
     customError.original = error;
+    customError.response = error?.response;
+    customError.status = error?.response?.status;
     throw customError;
   }
 }
-
-

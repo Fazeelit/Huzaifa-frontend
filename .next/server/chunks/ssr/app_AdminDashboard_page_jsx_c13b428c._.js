@@ -1,3 +1,0 @@
-module.exports=[32848,a=>{"use strict";var b=a.i(87924),c=a.i(72131),d=a.i(50944),e=a.i(70790);function f(){let a=(0,d.useRouter)();return(0,c.useEffect)(()=>{let{token:b,role:c,permissions:d}=(0,e.readStoredAuth)();if(!b||!(0,e.isAllowedRole)(c))return void a.replace("/auth/login");let f=(0,e.getFirstAccessibleDashboardRoute)(c,d);a.replace(f||"/auth/login")},[a]),(0,b.jsx)("div",{className:"flex min-h-[60vh] items-center justify-center",children:(0,b.jsx)("p",{className:"text-sm text-slate-500",children:"Opening dashboard..."})})}a.s(["default",()=>f])}];
-
-//# sourceMappingURL=app_AdminDashboard_page_jsx_c13b428c._.js.map

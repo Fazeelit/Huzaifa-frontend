@@ -1,4 +1,5 @@
 export const ALLOWED_ROLES = ["ADMIN", "CLERK", "PRINCIPAL", "TEACHERS", "STUDENTS"];
+export const MIN_PASSWORD_LENGTH = 6;
 
 export const ROLE_HOME_ROUTES = {
   ADMIN: "/AdminDashboard/dashboard",
@@ -34,7 +35,13 @@ export const AUTH_ROLE_COOKIE = "app_role";
 export const AUTH_STORAGE = "sessionStorage";
 
 export function normalizeRole(role) {
-  return String(role || "").trim().toUpperCase()
+  const normalizedRole = String(role || "").trim().toUpperCase();
+
+  if (normalizedRole === "CLERCK") return "CLERK";
+  if (normalizedRole === "TEACHER") return "TEACHERS";
+  if (normalizedRole === "STUDENT") return "STUDENTS";
+
+  return normalizedRole;
 }
 
 export function normalizePermission(permission) {

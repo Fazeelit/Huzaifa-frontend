@@ -7,6 +7,7 @@ import {
   ALLOWED_ROLES,
   getFirstAccessibleDashboardRoute,
   getRolePermissions,
+  MIN_PASSWORD_LENGTH,
   normalizeRole,
   sanitizePermissions,
   setAuthSessionCookies,
@@ -41,11 +42,75 @@ export default function LoginPage() {
     return nextRoute || "/AdminDashboard/dashboard";
   };
 
+  const getLoginErrorMessage = (error) => {
+    const status = error?.status || error?.response?.status;
+    const backendReason =
+      error?.response?.data?.reason ||
+      error?.original?.response?.data?.reason ||
+      "";
+    const backendMessage =
+      error?.response?.data?.message ||
+      error?.response?.data?.error ||
+      error?.original?.response?.data?.message ||
+      error?.original?.response?.data?.error ||
+      error?.message ||
+      "Unable to sign in.";
+
+    if (/role_mismatch/i.test(backendReason)) {
+      return "The selected role does not match this account. Please choose the correct role and try again.";
+    }
+
+    if (/inactive_user/i.test(backendReason)) {
+      return "This account is inactive. Please contact the administrator.";
+    }
+
+    if (/invalid email or password/i.test(backendMessage)) {
+      return "Invalid email or password.";
+    }
+
+    if (/selected role does not match/i.test(backendMessage)) {
+      return "The selected role does not match this account. Please choose the correct role and try again.";
+    }
+
+    if (/invalid login response/i.test(backendMessage)) {
+      return "The server accepted the login but returned incomplete account data. Please contact the administrator.";
+    }
+
+    if (/no permissions assigned/i.test(backendMessage)) {
+      return "Your account does not have any permissions assigned yet. Please contact the administrator.";
+    }
+
+    if (status >= 500) {
+      return "The server could not complete the login request. Please try again in a moment.";
+    }
+
+    if (/request timed out/i.test(backendMessage)) {
+      return "The login request timed out. Please try again.";
+    }
+
+    if (/network error/i.test(backendMessage)) {
+      return "Unable to reach the server. Check your internet connection and backend API URL, then try again.";
+    }
+
+    return backendMessage;
+  };
+
+  const isInvalidCredentialError = (error) => {
+    const status = error?.status || error?.response?.status;
+    const backendMessage =
+      error?.response?.data?.message ||
+      error?.response?.data?.error ||
+      error?.message ||
+      "";
+
+    return status === 401 && /invalid email or password/i.test(backendMessage);
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     if (loading) return;
 
-    const email = form.email.trim().toLowerCase();
+    const email = form.email.trim();
     const password = form.password;
     const selectedRole = normalizeRole(form.role);
 
@@ -55,8 +120,8 @@ export default function LoginPage() {
       return;
     }
 
-    if (password.trim().length < 8) {
-      setMessage("Password must be at least 8 characters");
+    if (password.trim().length < MIN_PASSWORD_LENGTH) {
+      setMessage(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
       setShowErrorModal(true);
       return;
     }
@@ -70,16 +135,38 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const response = await apiRequest("/user-management/login", {
-        method: "POST",
-        data: {
-          email,
-          password,
-          role: selectedRole,
-        },
-      });
+      const loginPayload = {
+        email,
+        password,
+        role: selectedRole,
+      };
 
-      const { token, user } = response?.data || {};
+      let response;
+
+      try {
+        response = await apiRequest("/user-management/login", {
+          method: "POST",
+          data: loginPayload,
+        });
+      } catch (error) {
+        if (!selectedRole || !isInvalidCredentialError(error)) {
+          throw error;
+        }
+
+        // Some deployed backends validate the credentials first and reject
+        // mismatched roles with the same generic 401 message. Retry once
+        // without the role field so the backend can return the account role.
+        response = await apiRequest("/user-management/login", {
+          method: "POST",
+          data: {
+            email,
+            password,
+          },
+        });
+      }
+
+      const loginData = response?.data && typeof response.data === "object" ? response.data : response;
+      const { token, user } = loginData || {};
       const returnedRole = normalizeRole(user?.role);
 
       if (!token || !user || !ALLOWED_ROLES.includes(returnedRole)) {
@@ -123,7 +210,7 @@ export default function LoginPage() {
         window.location.replace(nextRoute);
       }, 800);
     } catch (err) {
-      setMessage(err?.response?.data?.message || err?.message || "Login failed");
+      setMessage(getLoginErrorMessage(err));
       setShowErrorModal(true);
     } finally {
       setLoading(false);
@@ -158,7 +245,7 @@ export default function LoginPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 px-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-[28px] border border-rose-100 bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
             <FaTimesCircle className="text-rose-600 text-5xl mx-auto mb-3" />
-            <h2 className="text-xl font-bold text-rose-700">Login Failed</h2>
+            <h2 className="text-xl font-bold text-rose-700">Unable to sign in</h2>
             <p className="text-slate-600 mt-2">{message}</p>
             <button
               onClick={() => setShowErrorModal(false)}

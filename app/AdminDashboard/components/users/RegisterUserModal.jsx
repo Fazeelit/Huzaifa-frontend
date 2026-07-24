@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X, CheckCircle } from "lucide-react";
 import { apiRequest } from "../../authservice/api";
+import { MIN_PASSWORD_LENGTH } from "../../authservice/auth";
 
 const REGISTER_ROLE_LABELS = {
   ADMIN: "Admin",
@@ -60,8 +61,8 @@ export default function RegisterUserModal({
       alert("Please fill all required fields");
       return;
     }
-    if (String(password).trim().length < 6) {
-      alert("Password must be at least 6 characters.");
+    if (String(password).trim().length < MIN_PASSWORD_LENGTH) {
+      alert(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
     if (phone && !phonePattern.test(phone)) {
