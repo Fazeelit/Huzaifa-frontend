@@ -1,0 +1,3 @@
+{
+  "/AdminDashboard/students/class-detail/[classId]/[sectionId]/page": "app/AdminDashboard/students/class-detail/[classId]/[sectionId]/page.js"
+}

@@ -1,80 +1,74 @@
 "use client";
 
-import { LayoutDashboard, Menu, RefreshCw } from "lucide-react";
+import { usePathname } from "next/navigation";
+import {
+  BarChart3,
+  BookOpen,
+  CalendarCheck,
+  CalendarDays,
+  GraduationCap,
+  Landmark,
+  LayoutDashboard,
+  Menu,
+  Receipt,
+  ShieldCheck,
+  UserCog,
+  Users,
+  Wallet,
+} from "lucide-react";
 
-export default function Topbar({
-  title,
-  onTopIconClick,
-  titleIcon: TitleIcon = LayoutDashboard,
-  onSyncClick,
-  pendingSyncCount = 0,
-  syncing = false,
-}) {
+const titleIconMap = {
+  Dashboard: LayoutDashboard,
+  Classes: BookOpen,
+  Students: Users,
+  Teachers: GraduationCap,
+  Results: BarChart3,
+  Fees: Wallet,
+  Attendance: CalendarCheck,
+  "Time Table": CalendarDays,
+  "Monthly Expenses": Receipt,
+  "Financial Administration": Landmark,
+  Users: UserCog,
+  Roles: ShieldCheck,
+};
+
+const routeTitleMap = {
+  dashboard: "Dashboard",
+  classes: "Classes",
+  students: "Students",
+  teachers: "Teachers",
+  results: "Results",
+  fee: "Fees",
+  attendance: "Attendance",
+  timetable: "Time Table",
+  "monthly-expenses": "Monthly Expenses",
+  admin: "Financial Administration",
+  users: "Users",
+  roles: "Roles",
+};
+
+export default function Topbar({ onToggleSidebar, isSidebarOpen }) {
+  const pathname = usePathname();
+  const slug = pathname?.split("/").filter(Boolean)[1] || "dashboard";
+  const title = routeTitleMap[slug] || "Dashboard";
+  const TitleIcon = titleIconMap[title] || BarChart3;
+
   return (
-    <header
-      className={`
-        sticky top-0 z-[35] h-16 sm:h-20
-        flex items-center justify-between gap-3
-        px-3 sm:px-6
-        bg-gradient-to-r from-white via-slate-50 to-white/95
-        backdrop-blur-md border-b border-slate-200 shadow-sm
-        w-full
-      `}
-    >
-      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-        <button
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 sm:h-10 sm:w-10"
-          onClick={onTopIconClick}
-          aria-label="Toggle sidebar"
-        >
-          <Menu size={20} />
-        </button>
-
-        <button
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-blue-200 bg-blue-600/10 text-blue-600 transition hover:bg-blue-600/20 sm:h-9 sm:w-9"
-          onClick={onTopIconClick}
-          aria-label="Toggle sidebar collapse"
-          title="Toggle sidebar"
-        >
-          <TitleIcon size={16} />
-        </button>
-        <div className="min-w-0 leading-tight">
-          <p className="truncate text-[10px] uppercase tracking-wider text-slate-500 sm:text-[11px]">
-            Admin Panel
-          </p>
-          <h1 className="truncate text-sm font-semibold text-slate-800 sm:text-lg">
+    <header className={`fixed top-0 right-0 left-0 z-30 border-b border-slate-200/70 bg-slate-50/95 backdrop-blur supports-[backdrop-filter]:bg-slate-50/80 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:bg-slate-900 dark:border-slate-800 transition-all duration-300 ${isSidebarOpen ? 'lg:left-64' : 'lg:left-14'}`}>
+      <div className="flex min-h-16 items-center justify-between gap-3 px-3 py-2 sm:px-6 lg:px-8">
+        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-blue-700 bg-blue-600 text-white shadow-sm transition hover:bg-blue-700 dark:border-blue-600 dark:bg-blue-600 dark:text-white dark:hover:bg-blue-500 sm:h-10 sm:w-10"
+            aria-label="Toggle sidebar menu"
+          >
+          <Menu className="h-4 w-4" strokeWidth={2} />
+          </button>
+          <TitleIcon className="h-5 w-5 flex-shrink-0 text-cyan-600 dark:text-cyan-400" strokeWidth={2} />
+          <h1 className="truncate text-base font-bold text-slate-800 dark:text-slate-100 sm:text-lg md:text-xl">
             {title}
           </h1>
-        </div>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={onSyncClick}
-          disabled={syncing}
-          className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-white shadow-md transition disabled:cursor-not-allowed disabled:opacity-60 ${
-            pendingSyncCount > 0
-              ? "bg-red-600 hover:bg-red-700 shadow-red-600/20"
-              : "bg-blue-600 hover:bg-blue-700 shadow-blue-600/20"
-          }`}
-        >
-          <RefreshCw size={14} className={syncing ? "animate-spin" : ""} />
-          <span>{syncing ? "Syncing..." : "Sync Data"}</span>
-          <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]">
-            {pendingSyncCount}
-          </span>
-        </button>
-
-        <div className="hidden shrink-0 sm:flex items-center">
-          <span
-            className={`mr-2 h-2.5 w-2.5 rounded-full ${
-              pendingSyncCount > 0 ? "bg-red-500" : "bg-blue-500"
-            }`}
-          />
-          <span className="text-xs font-medium text-slate-500">
-            {pendingSyncCount > 0 ? `${pendingSyncCount} Pending` : "Synced"}
-          </span>
         </div>
       </div>
     </header>

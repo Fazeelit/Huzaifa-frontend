@@ -1,16 +1,26 @@
-// app/layout.jsx
-import "./globals.css";
-
-export const metadata = {
-  title: "Huzaifa_Autos Feroza",
-  description: "Huzaifa_Autos Feroza - Auto Parts Sales System",
-};
+'use client';
+import { useState, useEffect } from 'react';
+import { ThemeProvider } from './context/ThemeContext';
+import Toast from '../app/AdminDashboard/components/ui/Toast';
+import './globals.css';
 
 export default function RootLayout({ children }) {
+  const [toast, setToast] = useState(null);
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
   return (
     <html lang="en">
-      <body className="bg-gray-50 min-h-screen overflow-x-hidden">
-        {children}
+      <body>
+        <ThemeProvider>
+          <main>{children}</main>
+          {toast && <Toast message={toast.message} type={toast.type} />}
+        </ThemeProvider>
       </body>
     </html>
   );

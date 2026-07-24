@@ -1,0 +1,3 @@
+module.exports=[74535,a=>{"use strict";var b=a.i(87924),c=a.i(72131),d=a.i(50944),e=a.i(210),f=a.i(60702),g=a.i(70106);(0,g.default)("credit-card",[["rect",{width:"20",height:"14",x:"2",y:"5",rx:"2",key:"ynyp8z"}],["line",{x1:"2",x2:"22",y1:"10",y2:"10",key:"1b3vmo"}]]);a.i(71931),a.i(1199),a.i(81560);(0,g.default)("user-round",[["circle",{cx:"12",cy:"8",r:"5",key:"1hypcn"}],["path",{d:"M20 21a8 8 0 0 0-16 0",key:"rfgkzh"}]]);a.i(63710),a.i(70790),a.i(596),a.i(89915);let h=Error("Cannot find module '../../services/storage'");throw h.code="MODULE_NOT_FOUND",h}];
+
+//# sourceMappingURL=app_AdminDashboard_fee_%5BstudentId%5D_page_jsx_e5def782._.js.map

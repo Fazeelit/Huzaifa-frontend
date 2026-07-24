@@ -3,21 +3,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Check, X } from "lucide-react";
 import { apiRequest } from "../../authservice/api";
-
-const ALL_PERMISSIONS = [
-  "DASHBOARD_VIEW",
-  "POS_VIEW", "POS_CREATE", "POS_EDIT", "POS_DELETE",
-  "CUSTOMER_VIEW", "CUSTOMER_CREATE", "CUSTOMER_EDIT", "CUSTOMER_DELETE",
-  "PRODUCT_VIEW", "PRODUCT_CREATE", "PRODUCT_EDIT", "PRODUCT_DELETE",
-  "PURCHASE_VIEW", "PURCHASE_CREATE", "PURCHASE_EDIT", "PURCHASE_DELETE",
-  "PARTIAL_PAYMENT_ADD",
-  "SUPPLIER_VIEW", "SUPPLIER_CREATE", "SUPPLIER_EDIT", "SUPPLIER_DELETE",
-  "SALE_VIEW", "SALE_CREATE", "SALE_EDIT", "SALE_DELETE",
-  "EXPENSE_VIEW", "EXPENSE_CREATE", "EXPENSE_EDIT", "EXPENSE_DELETE",
-  "REPORT_VIEW",
-  "USER_VIEW", "USER_CREATE", "USER_EDIT", "USER_DELETE",
-  "ROLE_VIEW", "ROLE_CREATE", "ROLE_EDIT", "ROLE_DELETE",
-];
+import {
+  ALL_PERMISSIONS,
+  PERMISSION_MODULES,
+  PERMISSION_OPTIONS,
+  getPermissionLabel,
+} from "./permissionCatalog";
 
 const PermissionsModal = ({ role, open, onClose, onSave }) => {
   const [permissions, setPermissions] = useState([]);
@@ -26,16 +17,17 @@ const PermissionsModal = ({ role, open, onClose, onSave }) => {
 
   useEffect(() => {
     if (open && Array.isArray(role?.permissions)) {
-      setPermissions(
-        [...new Set(role.permissions)].filter((perm) => ALL_PERMISSIONS.includes(perm))
-      );
+      setPermissions([...new Set(role.permissions)]);
     } else if (open) {
       setPermissions([]);
     }
   }, [role, open]);
 
   const filteredPermissions = useMemo(
-    () => ALL_PERMISSIONS.filter((perm) => perm.toLowerCase().includes(search.toLowerCase())),
+    () =>
+      (PERMISSION_OPTIONS || []).filter((perm) =>
+        getPermissionLabel(perm.key).toLowerCase().includes(search.toLowerCase())
+      ),
     [search]
   );
 
@@ -50,7 +42,6 @@ const PermissionsModal = ({ role, open, onClose, onSave }) => {
 
   const handleSave = async () => {
     if (!role?._id) return;
-
     if (permissions.length === 0) {
       alert("At least one permission is required.");
       return;
@@ -58,30 +49,21 @@ const PermissionsModal = ({ role, open, onClose, onSave }) => {
 
     try {
       setLoading(true);
-
-      const sanitizedPermissions = permissions.filter((perm) =>
-        ALL_PERMISSIONS.includes(perm)
-      );
-
-      const payload = {
-        role: role.role || role.name,
-        permissions: sanitizedPermissions,
-      };
-
       const res = await apiRequest(`/roles/updateRole/${role._id}`, {
         method: "PUT",
-        data: payload,
+        data: {
+          role: role.role,
+          description: role.description || "",
+          status: role.status || "ACTIVE",
+          permissions,
+        },
         includeAuth: true,
       });
 
-      const updatedPermissions =
-        res?.data?.permissions || res?.role?.permissions || sanitizedPermissions;
-
-      onSave(role._id, updatedPermissions);
+      onSave(role._id, res?.role?.permissions || permissions);
       onClose();
     } catch (error) {
-      console.error("Failed to save permissions:", error.message);
-      alert("Failed to save permissions.");
+      alert(error?.message || "Failed to save permissions.");
     } finally {
       setLoading(false);
     }
@@ -90,75 +72,101 @@ const PermissionsModal = ({ role, open, onClose, onSave }) => {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-      <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-slate-200 bg-white shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 rounded-t-3xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-700 p-4 text-white sm:p-5">
-          <div className="min-w-0">
-            <h2 className="text-xl font-bold tracking-tight">Manage Permissions</h2>
-            <p className="break-words text-sm text-indigo-200">Role: {role?.role || role?.name || "N/A"}</p>
+    <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+      <div className="bg-white/90 backdrop-blur rounded-3xl shadow-[0_30px_80px_-40px_rgba(15,23,42,0.55)] max-w-5xl w-full max-h-[90vh] overflow-y-auto border border-slate-200/70">
+        <div className="flex justify-between items-center bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-700 text-white p-6 rounded-t-3xl">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-semibold  ">Manage Permissions</h2>
+            <p className="text-sm text-indigo-200">Role: {role?.role || "N/A"}</p>
           </div>
           <button
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/20 bg-white/10 transition-colors hover:bg-white/20"
+            className="rounded-full p-2 text-white/80 hover:text-white hover:bg-white/10 transition"
           >
-            <X className="h-5 w-5" />
+            <X />
           </button>
         </div>
 
-        <div className="flex flex-col gap-2 border-b border-slate-200 bg-slate-50/70 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="p-5 flex flex-col sm:flex-row gap-3 flex-wrap justify-between border-b border-slate-200">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search permissions..."
-            className="h-10 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 sm:w-60"
+            className="border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 rounded-xl w-full sm:w-72 text-sm outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400"
           />
-
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex gap-2">
             <button
               onClick={selectAll}
-              className="h-10 w-full rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 sm:w-auto"
+              className="bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-600 transition"
             >
               Select All
             </button>
-
             <button
               onClick={unselectAll}
-              className="h-10 w-full rounded-xl bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700 sm:w-auto"
+              className="bg-slate-100 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-200 transition"
             >
-              Unselect All
+              Clear All
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 bg-gradient-to-b from-white to-slate-50/70 p-4 sm:grid-cols-2 sm:p-6">
-          {filteredPermissions.map((perm) => (
-            <div
-              key={perm}
-              onClick={() => togglePermission(perm)}
-              className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
-                permissions.includes(perm)
-                  ? "border-indigo-600 bg-indigo-600 text-white shadow-sm"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              {permissions.includes(perm) && <Check size={16} />}
-              {perm}
-            </div>
-          ))}
+        <div className="space-y-3 p-6">
+          {(PERMISSION_MODULES || []).map((module) => {
+            const modulePermissions = filteredPermissions.filter((item) => item.moduleKey === module.key);
+            if (modulePermissions.length === 0) return null;
+
+            return (
+              <div key={module.key} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-[180px]">
+                    <p className="font-semibold text-sm text-slate-700">{module.label}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPermissions((prev) => [...new Set([...prev, ...modulePermissions.map((item) => item.key)])])}
+                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 transition"
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPermissions((prev) => prev.filter((item) => !modulePermissions.some((option) => option.key === item)))}
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {modulePermissions.map((perm) => (
+                    <div
+                      key={perm.key}
+                      onClick={() => togglePermission(perm.key)}
+                      className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border px-3 py-2 text-center text-sm transition ${
+                        permissions.includes(perm.key)
+                          ? "bg-emerald-500 text-white border-emerald-400 shadow-sm"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {permissions.includes(perm.key) && <Check size={16} />}
+                      {getPermissionLabel(perm.key).replace(`${module.label} `, "")}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
-        <div className="flex flex-col justify-end gap-3 border-t border-slate-200 bg-white p-4 sm:flex-row">
-          <button
-            onClick={onClose}
-            className="h-10 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-medium hover:bg-slate-100 sm:w-auto"
-          >
+        <div className="flex justify-end gap-3 p-5 border-t border-slate-200">
+          <button onClick={onClose} className="px-4 py-2 border border-slate-200 rounded-lg text-sm">
             Cancel
           </button>
-
           <button
             onClick={handleSave}
             disabled={loading}
-            className="h-10 w-full rounded-xl bg-gradient-to-r from-slate-900 to-indigo-700 px-4 text-sm font-semibold text-white hover:from-slate-800 hover:to-indigo-600 disabled:opacity-60 sm:w-auto"
+            className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-blue-500 text-white rounded-lg text-sm font-semibold hover:from-emerald-600 hover:to-blue-600 transition"
           >
             {loading ? "Saving..." : "Save"}
           </button>

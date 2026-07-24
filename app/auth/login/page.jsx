@@ -1,24 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
+import Image from "next/image";
+import { apiRequest } from "../../AdminDashboard/authservice/api";
 import {
-  apiRequest,
-  clearCrudLocalData,
-  preloadCrudDataToLocalStorage,
-} from "../../AdminDashboard/authservice/api";
-import {
-  setAuthCookies,
-  clearAuthCookies,
-} from "../../AdminDashboard/authservice/authCookies";
-import {
-  clearPersistedAuth,
-  notifyAuthStateChanged,
-  persistAuthState,
-} from "../../AdminDashboard/authservice/authStorage";
-import { getFirstAllowedRoute } from "../../AdminDashboard/authservice/navigation";
-import { readStoredAuth } from "../../AdminDashboard/authservice/auth";
-import { normalizePermissionsForRole } from "../../AdminDashboard/authservice/permissions";
+  ALLOWED_ROLES,
+  getFirstAccessibleDashboardRoute,
+  getRolePermissions,
+  normalizeRole,
+  sanitizePermissions,
+  setAuthSessionCookies,
+} from "../../AdminDashboard/authservice/auth";
 import {
   FaUserCog,
   FaEnvelope,
@@ -26,100 +18,10 @@ import {
   FaEye,
   FaEyeSlash,
   FaCheckCircle,
-  FaTimesCircle,  
+  FaTimesCircle,
 } from "react-icons/fa";
-import { Stethoscope } from "lucide-react";
-
-/* ================= PERMISSION PRIORITY ================= */
-const PERMISSION_PRIORITY = [
-  "DASHBOARD_VIEW",
-  "CUSTOMER_VIEW", 
-  "POS_VIEW",
-  "SALE_VIEW",  
-  "PRODUCT_VIEW",
-  "PURCHASE_VIEW",
-  "SUPPLIER_VIEW",
-  "EXPENSE_VIEW",
-  "REPORT_VIEW",
-  "DOCTOR_VIEW",
-  "ROLE_VIEW",
-  "ACTIVITY_VIEW",
-];
-
-const ROLE_PERMISSION_PRIORITY = {
-  ADMIN: [
-    "DASHBOARD_VIEW",
-    "CUSTOMER_VIEW",
-    "POS_VIEW",
-    "SALE_VIEW",
-    "PRODUCT_VIEW",
-    "PURCHASE_VIEW",
-    "SUPPLIER_VIEW",
-    "EXPENSE_VIEW",
-    "REPORT_VIEW",
-    "ROLE_VIEW",
-    "ACTIVITY_VIEW",
-  ],
-  SALES_MANAGER: [
-    "POS_VIEW",
-    "PRODUCT_VIEW",
-    "PURCHASE_VIEW",
-    "SUPPLIER_VIEW",
-    "SALE_VIEW",
-    "EXPENSE_VIEW",
-    "REPORT_VIEW",
-    "DASHBOARD_VIEW",
-    "CUSTOMER_VIEW",
-    "ROLE_VIEW",
-    "ACTIVITY_VIEW",
-  ],
-};
-
-const PERMISSION_ROUTES = {
-  DASHBOARD_VIEW: "/AdminDashboard",
-  POS_VIEW: "/AdminDashboard/pos",
-  CUSTOMER_VIEW: "/AdminDashboard/customers",
-  PATIENT_VIEW: "/AdminDashboard/patients",  
-  PRODUCT_VIEW: "/AdminDashboard/products",
-  PURCHASE_VIEW: "/AdminDashboard/purchases",
-  SUPPLIER_VIEW: "/AdminDashboard/suppliers",
-  SALE_VIEW: "/AdminDashboard/sales",  
-  EXPENSE_VIEW: "/AdminDashboard/expenses",
-  REPORT_VIEW: "/AdminDashboard/reports",
-  ROLE_VIEW: "/AdminDashboard/roles",
-  ACTIVITY_VIEW: "/AdminDashboard/activity",
-};
-
-function extractToken(payload) {
-  const candidates = [
-    payload?.token,
-    payload?.accessToken,
-    payload?.jwt,
-    payload?.data?.token,
-    payload?.data?.accessToken,
-    payload?.data?.jwt,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") {
-      continue;
-    }
-
-    const normalizedToken = candidate.trim().replace(/^["']|["']$/g, "");
-    if (
-      normalizedToken &&
-      !normalizedToken.includes("[object Object]") &&
-      !/\s/.test(normalizedToken)
-    ) {
-      return normalizedToken;
-    }
-  }
-
-  return null;
-}
 
 export default function LoginPage() {
-  const router = useRouter();
   const [form, setForm] = useState({
     email: "",
     password: "",
@@ -132,54 +34,22 @@ export default function LoginPage() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [showErrorModal, setShowErrorModal] = useState(false);
 
-  const emailPattern =
-    /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-  useEffect(() => {
-    if (!showSuccess) return undefined;
+  const resolveAllowedRoute = (role, permissions = []) => {
+    const nextRoute = getFirstAccessibleDashboardRoute(role, permissions);
+    return nextRoute || "/AdminDashboard/dashboard";
+  };
 
-    router.prefetch("/AdminDashboard");
-    Object.values(PERMISSION_ROUTES).forEach((route) => {
-      router.prefetch(route);
-    });
-  }, [router, showSuccess]);
-
-  useEffect(() => {
-    const { token, role, permissions } = readStoredAuth();
-
-    if (!token || !role) {
-      return;
-    }
-
-    const normalizedPermissions = normalizePermissionsForRole(permissions, role);
-    const permissionPriority =
-      ROLE_PERMISSION_PRIORITY[String(role || "").toUpperCase()] ||
-      PERMISSION_PRIORITY;
-    let redirectTo =
-      getFirstAllowedRoute(normalizedPermissions) || "/AdminDashboard";
-
-    if (normalizedPermissions.includes("*")) {
-      redirectTo = "/AdminDashboard";
-    }
-
-    for (const perm of permissionPriority) {
-      if (normalizedPermissions.includes(perm) && PERMISSION_ROUTES[perm]) {
-        redirectTo = PERMISSION_ROUTES[perm];
-        break;
-      }
-    }
-
-    router.replace(redirectTo);
-  }, [router]);
-
-  /* ================= LOGIN ================= */
   const handleLogin = async (e) => {
     e.preventDefault();
     if (loading) return;
 
-    const { email, password, role } = form;
+    const email = form.email.trim().toLowerCase();
+    const password = form.password;
+    const selectedRole = normalizeRole(form.role);
 
-    if (!emailPattern.test(email.trim())) {
+    if (!emailPattern.test(email)) {
       setMessage("Please enter a valid email address");
       setShowErrorModal(true);
       return;
@@ -191,8 +61,8 @@ export default function LoginPage() {
       return;
     }
 
-    if (!role) {
-      setMessage("Please select a role");
+    if (!ALLOWED_ROLES.includes(selectedRole)) {
+      setMessage("Please select a valid role");
       setShowErrorModal(true);
       return;
     }
@@ -200,87 +70,60 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      clearPersistedAuth();
-      clearAuthCookies();
-
       const response = await apiRequest("/user-management/login", {
         method: "POST",
         data: {
           email,
           password,
-          role, // ✅ sent for validation only
+          role: selectedRole,
         },
-        allowOfflineCrud: false,
-        suppressErrorToast: true,
-        suppressErrorLog: true,
       });
 
-      const loginPayload =
-        response?.data && typeof response.data === "object"
-          ? response.data
-          : response;
+      const { token, user } = response?.data || {};
+      const returnedRole = normalizeRole(user?.role);
 
-      const token = extractToken(loginPayload) || extractToken(response);
-      const user =
-        loginPayload?.user ||
-        loginPayload?.admin ||
-        loginPayload?.data?.user ||
-        null;
-
-      if (!token || !user) {
-        throw new Error(
-          response?.message ||
-            loginPayload?.message ||
-            "Invalid login response"
-        );
+      if (!token || !user || !ALLOWED_ROLES.includes(returnedRole)) {
+        throw new Error("Invalid login response");
       }
 
-      /* ===== CLEAR OLD AUTH ===== */
-      clearPersistedAuth();
-      clearCrudLocalData();
+      if (returnedRole !== selectedRole) {
+        throw new Error("Selected role does not match your account role");
+      }
 
-      const normalizedPermissions = normalizePermissionsForRole(
-        user.permissions || [],
-        user.role
+      sessionStorage.removeItem("authToken");
+      sessionStorage.removeItem("user");
+      sessionStorage.removeItem("role");
+      sessionStorage.removeItem("permissions");
+      localStorage.removeItem("authToken");
+      localStorage.removeItem("user");
+      localStorage.removeItem("role");
+      localStorage.removeItem("permissions");
+
+      const userData = { ...user, role: returnedRole };
+
+      sessionStorage.setItem("authToken", token);
+      sessionStorage.setItem("user", JSON.stringify(userData));
+      sessionStorage.setItem("role", returnedRole);
+      const normalizedPermissions = getRolePermissions(
+        returnedRole,
+        sanitizePermissions(Array.isArray(user?.permissions) ? user.permissions : [])
       );
+      if (returnedRole !== "ADMIN" && normalizedPermissions.length === 0) {
+        throw new Error("Your account has no permissions assigned. Contact administrator.");
+      }
+      sessionStorage.setItem("permissions", JSON.stringify(normalizedPermissions));
 
-      /* ===== SAVE AUTH (BACKEND IS SOURCE OF TRUTH) ===== */
-      persistAuthState({
-        token,
-        user,
-        role: user.role,
-        permissions: normalizedPermissions,
-      });
-      setAuthCookies(user.role);
+      setAuthSessionCookies(returnedRole);
 
-      notifyAuthStateChanged();
+      window.dispatchEvent(new Event("storage"));
       setShowSuccess(true);
+      const nextRoute = resolveAllowedRoute(returnedRole, normalizedPermissions);
 
-      /* ===== SAFE REDIRECT ===== */
-      const permissions = normalizedPermissions;
-      const permissionPriority =
-        ROLE_PERMISSION_PRIORITY[String(user.role || "").toUpperCase()] ||
-        PERMISSION_PRIORITY;
-      let redirectTo = getFirstAllowedRoute(permissions) || "/auth/login";
-
-      if (permissions.includes("*")) {
-        redirectTo = "/AdminDashboard";
-      }
-
-      for (const perm of permissionPriority) {
-        if (permissions.includes(perm) && PERMISSION_ROUTES[perm]) {
-          redirectTo = PERMISSION_ROUTES[perm];
-          break;
-        }
-      }
-
-      router.replace(redirectTo);
-
-      preloadCrudDataToLocalStorage(user.permissions || []).catch(() => {
-        // MainLayout will keep trying in the background if preload is incomplete.
-      });
+      setTimeout(() => {
+        window.location.replace(nextRoute);
+      }, 800);
     } catch (err) {
-      setMessage(err?.message || "Login failed");
+      setMessage(err?.response?.data?.message || err?.message || "Login failed");
       setShowErrorModal(true);
     } finally {
       setLoading(false);
@@ -288,33 +131,38 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-sky-50 via-white to-emerald-50 px-3 py-4 sm:px-4 sm:py-8">
-      <div className="pointer-events-none absolute -top-24 -left-16 h-72 w-72 rounded-full bg-sky-200/35 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-20 -right-12 h-72 w-72 rounded-full bg-emerald-200/35 blur-3xl" />
+    <div className="relative min-h-screen overflow-hidden bg-[linear-gradient(180deg,#f8fafc_0%,#e0f2fe_45%,#fff7ed_100%)] text-slate-900">
+      <Image
+        src="/impage/loginbg.png"
+        alt="School background image"
+        fill
+        priority
+        className="object-cover object-center opacity-10"
+      />
 
-      {/* SUCCESS MODAL */}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.18),transparent_24%)]" />
+      <div className="absolute left-[-8rem] top-[-6rem] h-56 w-56 rounded-full bg-cyan-300/30 blur-3xl" />
+      <div className="absolute bottom-[-7rem] right-[-4rem] h-64 w-64 rounded-full bg-amber-200/40 blur-3xl" />
+
       {showSuccess && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="mx-4 w-full max-w-sm rounded-2xl border border-emerald-100 bg-white p-6 text-center shadow-2xl">
-            <FaCheckCircle className="text-green-600 text-5xl mx-auto mb-3" />
-            <h2 className="text-xl font-bold text-green-700">
-              Login Successful
-            </h2>
-            <p className="text-gray-600 mt-2">Redirecting...</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-[28px] border border-emerald-100 bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <FaCheckCircle className="text-emerald-600 text-5xl mx-auto mb-3" />
+            <h2 className="text-xl font-bold text-emerald-700">Login Successful</h2>
+            <p className="text-slate-600 mt-2">Redirecting...</p>
           </div>
         </div>
       )}
 
-      {/* ERROR MODAL */}
       {showErrorModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="mx-4 w-full max-w-sm rounded-2xl border border-rose-100 bg-white p-6 text-center shadow-2xl">
-            <FaTimesCircle className="text-red-600 text-5xl mx-auto mb-3" />
-            <h2 className="text-xl font-bold text-red-700">Login Failed</h2>
-            <p className="text-gray-600 mt-2">{message}</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-[28px] border border-rose-100 bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <FaTimesCircle className="text-rose-600 text-5xl mx-auto mb-3" />
+            <h2 className="text-xl font-bold text-rose-700">Login Failed</h2>
+            <p className="text-slate-600 mt-2">{message}</p>
             <button
               onClick={() => setShowErrorModal(false)}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg"
+              className="mt-4 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg"
             >
               Close
             </button>
@@ -322,118 +170,131 @@ export default function LoginPage() {
         </div>
       )}
 
-      {/* LOGIN FORM */}
-      <div className="relative w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200/60 bg-white/90 shadow-2xl backdrop-blur-sm sm:rounded-3xl">
-        <div className="grid md:grid-cols-[1.05fr_1fr]">
-          <div className="hidden md:flex flex-col justify-between p-10 bg-gradient-to-br from-slate-900 to-emerald-500 text-white">
-            <div className="space-y-6">
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-sm">
-                Secure Auto Products Access
+      <section className="relative z-10 flex min-h-screen items-center px-4 py-8 sm:px-6 lg:px-10 xl:px-16">
+        <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[1.12fr_0.88fr] lg:items-center">
+          <div className="hidden lg:block">
+            <div className="max-w-2xl rounded-[2.5rem] border border-white/80 bg-white/75 p-8 shadow-[0_30px_90px_rgba(14,116,144,0.16)] backdrop-blur-xl xl:p-10">
+              <div className="mb-8 flex items-center gap-5">
+                <div className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-[2rem] border border-cyan-100 bg-white p-2 shadow-[0_16px_50px_rgba(14,165,233,0.20)] xl:h-28 xl:w-36">
+                  <Image
+                    src="/impage/schoollogo.png"
+                    alt="AL-Flaha Public Secondary School Feroza logo"
+                    fill
+                    className="rounded-full object-contain "
+                  />
+                </div>
+                <div>
+                  <p className="text-sm font-times uppercase tracking-[0.35em] text-cyan-700/90">
+                    Welcome To
+                  </p>
+                  <h1 className="mt-2 bg-gradient-to-r from-slate-900 via-cyan-700 to-sky-500 bg-clip-text text-4xl font-Montserrat font-bold italic leading-tight text-transparent xl:text-5xl">
+                    AL-Flaha Public
+                    <span className="block text-sky-600">Secondary School Feroza</span>
+                  </h1>
+                </div>
               </div>
-              <h1 className="font-serif text-5xl font-semibold italic">
-                Huzaifa Autos  <br />
-                Feroza
-              </h1>
-              <p className="text-white/90 text-sm leading-6 max-w-md">
-                Welcome back. Sign in to continue managing Huzaifa Autos, and reports in one place.
-              </p>
-            </div>
 
-            <div className="rounded-2xl bg-white/15 p-4 text-sm">
-              <p className="font-semibold">System Access</p>
-              <p className="text-white/90 mt-1">
-                Choose your assigned role and continue securely.
+              <p className="max-w-xl text-lg leading-8 text-slate-600 xl:text-xl">
+                Empowering bright minds with discipline, knowledge, and the confidence to lead tomorrow.
               </p>
+
+              <div className="mt-8 grid gap-4 sm:grid-cols-2">
+                <div className="rounded-[1.6rem] border border-cyan-100 bg-cyan-50/80 p-5">
+                  <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-700">Focused Learning</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Learn in a modern academic environment built for focus, growth, and achievement.
+                  </p>
+                </div>
+                <div className="rounded-[1.6rem] border border-amber-100 bg-amber-50/80 p-5">
+                  <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-700">Quick Access</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Connect with your school system quickly and continue your journey with clarity and purpose.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="p-5 sm:p-8 md:p-10">
-            <div className="mb-6 rounded-2xl bg-gradient-to-r from-slate-900 to-emerald-500 p-4 text-white md:hidden">
-              <p className="font-serif text-2xl font-semibold italic leading-tight sm:text-3xl">Huzaifa Autos Feroza</p>
-              <p className="text-sm"> Feroza</p>
+          <div className="relative w-full max-w-[520px] rounded-[2rem] border border-white/90 bg-white/88 p-6 shadow-[0_32px_90px_rgba(15,23,42,0.16)] backdrop-blur-xl sm:p-8 lg:ml-auto">
+            <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300 to-transparent" />
+            <div className="mb-6 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-sky-600 text-white text-2xl shadow-[0_16px_40px_rgba(14,165,233,0.35)]">
+                <FaUserCog />
+              </div>
+              <div className="mb-4 lg:hidden">
+                <div className="relative mx-auto mb-4 flex h-20 w-20 items-center justify-center overflow-hidden rounded-[1.5rem] border border-cyan-100 bg-white p-2 shadow-[0_12px_35px_rgba(14,165,233,0.24)]">
+                  <Image
+                    src="/impage/schoollogo.png"
+                    alt="AL-Flaha Public Secondary School Feroza logo"
+                    fill
+                    className="rounded-full object-contain"
+                  />
+                </div>
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-700/90">
+                  AL-Flaha Public Secondary School Feroza
+                </p>
+              </div>
+              <h2 className="text-3xl sm:text-4xl font-bold text-slate-900">Sign In</h2>
+              <p className="mt-3 text-base sm:text-lg text-slate-500">Use your account credentials to continue</p>
             </div>
 
-            {/* <div className="flex justify-center text-3xl text-blue-700 ">
-              <img
-              src="/logo.png"
-              alt="UmerPOS Logo"
-              className="mx-auto -mb-2 h-40 w-40 object-contain"
-            />
-            </div>            */}
-           
-            <h2 className="text-center text-2xl font-bold text-slate-800 sm:text-3xl">
-              Autos POS Login
-            </h2>
-            <p className="mb-6 mt-1 text-center text-sm text-slate-500">
-              Enter your credentials to continue
-            </p>
-
-            <form onSubmit={handleLogin} className="space-y-4">
-              {/* Email */}
-              <div className="space-y-2">
-                <div className="relative">
-                  <FaEnvelope className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="email"
-                    placeholder="Email"
-                    className="w-full border border-slate-200 bg-slate-50/70 px-10 py-3 rounded-xl outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition"
-                    value={form.email}
-                    onChange={(e) =>
-                      setForm({ ...form, email: e.target.value })
-                    }
-                  />
-                </div>
+            <form onSubmit={handleLogin} className="space-y-6">
+              <div className="relative">
+                <FaEnvelope className="absolute left-4 top-1/2 -translate-y-1/2 text-sky-500" />
+                <input
+                  type="email"
+                  placeholder="Email"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-11 py-3.5 text-base sm:text-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                />
               </div>
 
-              {/* Password */}
-              <div className="space-y-2">
-                <div className="relative">
-                  <FaLock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Password"
-                    className="w-full border border-slate-200 bg-slate-50/70 px-10 py-3 rounded-xl outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition"
-                    value={form.password}
-                    onChange={(e) =>
-                      setForm({ ...form, password: e.target.value })
-                    }
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700"
-                  >
-                    {showPassword ? <FaEyeSlash /> : <FaEye />}
-                  </button>
-                </div>
-              </div>
-
-              {/* ROLE */}
-              <div className="space-y-2">
-                <select
-                  className="w-full border border-slate-200 bg-slate-50/70 px-4 py-3 rounded-xl outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 transition"
-                  value={form.role}
-                  onChange={(e) =>
-                    setForm({ ...form, role: e.target.value })
-                  }
+              <div className="relative">
+                <FaLock className="absolute left-4 top-1/2 -translate-y-1/2 text-sky-500" />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Password"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-11 py-3.5 pr-11 text-base sm:text-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500"
                 >
-                  <option value="">Select Role</option>
-                  <option value="ADMIN">Admin</option>
-                  <option value="SALES_MANAGER">Sales Manager</option>
-                </select>
+                  {showPassword ? <FaEyeSlash /> : <FaEye />}
+                </button>
               </div>
+
+              <select
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4 text-base sm:text-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500 tm-2"
+                value={form.role}
+                onChange={(e) => setForm({ ...form, role: e.target.value })}
+              >
+                <option value="">Select Role</option>
+                <option value="ADMIN">Admin</option>
+                <option value="CLERK">Clerk</option>
+                <option value="PRINCIPAL">Principal</option>
+                <option value="TEACHERS">Teachers</option>
+                <option value="STUDENTS">Students</option>
+              </select>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-gradient-to-r from-slate-900 to-emerald-500 text-white py-3 rounded-xl font-semibold shadow-lg shadow-sky-200 hover:opacity-95 transition"
+                className="w-full rounded-2xl bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600 py-3.5 text-base sm:text-lg font-semibold text-white shadow-[0_18px_40px_rgba(14,165,233,0.35)] hover:from-cyan-400 hover:via-sky-500 hover:to-blue-500 disabled:opacity-70"
               >
                 {loading ? "Logging in..." : "Login"}
               </button>
             </form>
           </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
+
+
+

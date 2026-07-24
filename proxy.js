@@ -38,13 +38,8 @@ export function proxy(req) {
     return response;
   }
 
-  if (isLoginRoute && isValidSession) {
-    return NextResponse.redirect(new URL(getRoleHomeRoute(roleCookie), req.url));
-  }
-
   if (pathname === "/") {
-    const target = isValidSession ? getRoleHomeRoute(roleCookie) : "/auth/login";
-    return NextResponse.redirect(new URL(target, req.url));
+    return NextResponse.redirect(new URL("/auth/login", req.url));
   }
 
   return NextResponse.next();
