@@ -17,7 +17,7 @@ import Button from '../../components/ui/Button';
 import { hasPermission } from '../../authservice/auth';
 import { useAuth } from '../../authservice/useAuth';
 import { showToast } from '../../../utils/helpers';
-import { STORAGE_KEYS, readList, writeList } from '../../services/storage';
+import { STORAGE_KEYS, readList, writeList } from '../../../services/storage';
 
 const MONTHS = [
   'January',

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeProvider } from '../context/ThemeContext';
 import Sidebar from './components/layout/Sidebar';
-import Topbar from './components/Topbar';
+import Topbar from './components/Topbar.jsx';
 import {
   canAccessDashboardPath,
   getFirstAccessibleDashboardRoute,

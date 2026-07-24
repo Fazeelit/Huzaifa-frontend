@@ -4,8 +4,8 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Eye, Pencil, Trash2 } from 'lucide-react';
-import { hasPermission } from '../../../authservice/auth';
-import { useAuth } from '../../../authservice/useAuth';
+import { hasPermission } from '../../../../authservice/auth';
+import { useAuth } from '../../../../authservice/useAuth';
 import Button from '../../../../components/ui/Button';
 import { showToast } from '../../../../../utils/helpers';
 import classService from '../../../../../services/classService';

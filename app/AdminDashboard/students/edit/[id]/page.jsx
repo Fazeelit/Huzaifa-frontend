@@ -2,8 +2,8 @@
 
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { hasPermission } from '../../authservice/auth';
-import { useAuth } from '../../authservice/useAuth';
+import { hasPermission } from '../../../authservice/auth';
+import { useAuth } from '../../../authservice/useAuth';
 import Button from '../../../components/ui/Button';
 import { showToast } from '../../../../utils/helpers';
 
